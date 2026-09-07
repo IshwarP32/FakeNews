@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fake News Risk Analyzer</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --primary: #123a71;
+      --secondary: #2d6cdf;
+      --accent: #eaf1ff;
+      --text: #1f2a37;
+      --muted: #5f6f85;
+      --border: #dfe7f3;
+      --green: #1a7f5a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    .container {
+      max-width: 980px;
+      margin: 28px auto;
+      padding: 0 18px 30px;
+    }
+
+    .header {
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      color: white;
+      border-radius: 16px;
+      padding: 28px 22px;
+      margin-bottom: 20px;
+    }
+
+    .header h1 {
+      margin: 0 0 10px;
+      font-size: 2rem;
+    }
+
+    .header p {
+      margin: 0;
+      color: rgba(255,255,255,0.92);
+      font-size: 1rem;
+    }
+
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 22px 22px 18px;
+      margin-top: 18px;
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 1.35rem;
+      color: var(--primary);
+      border-bottom: 2px solid var(--accent);
+      padding-bottom: 8px;
+    }
+
+    .section p {
+      margin: 8px 0;
+      font-size: 1rem;
+    }
+
+    .hld-panel {
+      margin-top: 10px;
+      border: 1px solid #d6e1ee;
+      border-radius: 16px;
+      background: #f8fbff;
+      padding: 18px 20px 24px;
+    }
+
+    .hld-title {
+      font-size: 2.3rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin: 6px 0 20px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid #d6e1ee;
+    }
+
+    .hld-flow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .diagram-block {
+      width: 180px;
+      min-height: 150px;
+      border-radius: 16px;
+      border: 1px solid #dfe7f3;
+      background: #edf3fb;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      text-align: center;
+      padding: 18px 14px;
+      font-size: 1rem;
+      box-shadow: 0 2px 8px rgba(18, 58, 113, 0.04);
+    }
+
+    .diagram-block strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 1.28rem;
+      color: var(--primary);
+    }
+
+    .diagram-block.green {
+      background: #eaf7ee;
+      border-color: #d3ead8;
+      color: var(--green);
+    }
+
+    .diagram-block.green strong {
+      color: var(--green);
+    }
+
+    .hld-arrow {
+      font-size: 2.3rem;
+      color: #69768a;
+      font-weight: 300;
+      line-height: 1;
+    }
+
+    @media (max-width: 760px) {
+      .hld-flow {
+        flex-direction: column;
+      }
+
+      .diagram-block {
+        width: 100%;
+      }
+
+      .hld-arrow {
+        transform: rotate(90deg);
+      }
+    }
+
+    .checkpoint-box {
+      display: grid;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .checkpoint {
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--secondary);
+      background: #fafcff;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>Project Plan</h1>
+      <p>Fake News Risk Analyzer</p>
+    </header>
+
+    <section class="section">
+      <h2>Problem Statement</h2>
+      <p>Misinformation spreads quickly and creates confusion, fear, and social disruption.</p>
+      <p>Most systems only classify news as true or false, but they do not measure how harmful or risky it may be.</p>
+    </section>
+
+    <section class="section">
+      <h2>Project Idea</h2>
+      <p>This project analyzes news content, checks for suspicious patterns, and assigns a risk score based on source reliability, emotional tone, urgency, and topic sensitivity.</p>
+      <p>It also explains the result using AI-assisted evidence to make the decision understandable and useful in real situations.</p>
+    </section>
+
+    <section class="section">
+      <div class="hld-panel">
+        <div class="hld-title">High-Level Design</div>
+
+        <div class="hld-flow">
+          <div class="diagram-block">
+            <strong>1. Input</strong>
+            News title/article/url
+          </div>
+          <div class="hld-arrow">→</div>
+          <div class="diagram-block">
+            <strong>2. Preprocess</strong>
+            Clean text and extract features
+          </div>
+          <div class="hld-arrow">→</div>
+          <div class="diagram-block">
+            <strong>3. Risk Analysis</strong>
+            Source, tone, urgency, keywords, and severity scoring
+          </div>
+          <div class="hld-arrow">→</div>
+          <div class="diagram-block">
+            <strong>4. AI Evidence</strong>
+            Explain result using trusted-source context
+          </div>
+          <div class="hld-arrow">→</div>
+          <div class="diagram-block green">
+            <strong>5. Output</strong>
+            Risk level with reasons and evidence summary
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Project Plan</h2>
+      <div class="checkpoint-box">
+        <div class="checkpoint">
+          <strong>1 – Problem Definition:</strong> Finalize the project goal, define the core problem, and identify the target use case for misinformation risk detection.
+        </div>
+        <div class="checkpoint">
+          <strong>2 – Dataset and Baseline:</strong> Collect relevant news data, review the Kaggle fake/real news dataset, and build a baseline classifier to understand the text patterns.
+        </div>
+        <div class="checkpoint">
+          <strong>3 – Preprocessing and Feature Design:</strong> Clean the text, remove noise, and extract linguistic and content-based features such as sentiment, urgency cues, and suspicious language.
+        </div>
+        <div class="checkpoint">
+          <strong>4 – Risk Engine Development:</strong> Develop the risk-scoring logic to evaluate source reliability, emotional tone, topic sensitivity, and misinformation severity.
+        </div>
+        <div class="checkpoint">
+          <strong>5 – Backend and Database Integration:</strong> Build the backend services, connect the application to the database, and store analyzed articles, scores, and explanations.
+        </div>
+        <div class="checkpoint">
+          <strong>6 – AI Evidence Layer:</strong> Integrate a GenAI API to provide evidence-based reasoning and explain the risk score in a user-friendly way.
+        </div>
+        <div class="checkpoint">
+          <strong>7 – System Testing and Refinement:</strong> Test the full workflow, correct model or logic issues, improve result quality, and ensure the application behaves consistently.
+        </div>
+        <div class="checkpoint">
+          <strong>8 – Final Demo and Documentation:</strong> Prepare the final demo, verify the end-to-end flow, and document the project outcomes and results for presentation.
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Requirements to Learn Before Starting</h2>
+      <p><strong>Must Learn:</strong></p>
+      <ul>
+        <li>Python basics and data handling</li>
+        <li>Text preprocessing for NLP: cleaning, tokenization, stop words, stemming/lemmatization</li>
+        <li>Basic ML for text classification: logistic regression, Naive Bayes, TF-IDF</li>
+        <li>REST API basics with Flask or FastAPI</li>
+        <li>Working with JSON, request/response handling, and backend integration</li>
+        <li>How to call GenAI APIs and design prompts</li>
+        <li>Basic database operations with SQLAlchemy or SQL models</li>
+        <li>Frontend basics in React for a simple dashboard</li>
+      </ul>
+
+      <p><strong>Recommended:</strong></p>
+      <ul>
+        <li>Sentiment analysis and keyword-based feature extraction</li>
+        <li>Evaluation metrics: accuracy, precision, recall, F1-score</li>
+        <li>How to handle model outputs and display them in a web app</li>
+        <li>Basic deployment understanding for local demo or hosting</li>
+      </ul>
+
+      <p><strong>Optional:</strong></p>
+      <ul>
+        <li>Vector search or retrieval-based evidence lookup</li>
+        <li>Advanced prompt engineering for better AI explanation</li>
+        <li>Topic modeling or clustering for deeper analysis</li>
+      </ul>
+
+      <p>This keeps the project practical and avoids learning too much unrelated technology. The goal is to learn only the minimum needed to build a strong, working solution.</p>
+    </section>
+  </div>
+</body>
+</html>

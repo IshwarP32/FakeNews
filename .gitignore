@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+models/*.joblib
+reports/*.json
+reports/*.txt
+
+# Local Kaggle datasets
+data/*.csv
+*.csv
+
+# Frontend & Node
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.eslintcache
+.vite/
+*.local
