@@ -8,8 +8,9 @@
 - **Current stage:** Full-stack Web Application (FastAPI + React Vite) & Risk Engine
 - **Last updated:** 2026-09-14
 
-- **Source document:** `proposal.html`
-- **Current workspace:** Contains the proposal, context documentation, two Kaggle CSV datasets under `data/`, and the initial Python baseline structure.
+- **Source document:** `docs/proposal.html`
+- **Current workspace:** Contains project documentation under `docs/`, datasets under `data/`, ML package under `src/`, training scripts under `scripts/`, and full-stack app under `web_app/`.
+
 
 ## Problem
 
@@ -209,6 +210,19 @@ Observed examples suggest that fake articles commonly have `subject` values such
   - Inputs for headline and article text.
   - "Analyze" and "Clear" actions.
   - Clean score card output indicating model fake likelihood % and prediction (Fake vs Real).
+
+### 2026-09-14 - Folder structure & .gitignore reorganization
+
+- Consolidated documentation into a unified `docs/` folder:
+  - Moved `proposal.html` -> `docs/proposal.html`.
+  - Moved `documents/source_credibility.md` -> `docs/source_credibility.md` and removed temporary `documents/` directory.
+- Structured Python core library under `src/fake_news_risk/`:
+  - Added `src/fake_news_risk/classifier.py` containing reusable pipeline builder, data loader, trainer, and evaluator.
+  - Exported core functions through `src/fake_news_risk/__init__.py`.
+  - Refactored `scripts/train_model.py` into a thin CLI entry point that imports from `src.fake_news_risk`.
+- Overhauled `.gitignore` with comprehensive sections for Python bytecode, virtual environments, datasets, ML model artifacts, reports, Node/Vite build caches, IDE configs, and OS junk.
+- Updated `README.md` and `AI_CONTEXT.md` with the new hierarchy.
+
 
 
 
