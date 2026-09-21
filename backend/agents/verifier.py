@@ -66,10 +66,10 @@ class GeminiVerifier:
         report(on_progress, "analysis_started", "Starting verification pipeline...")
 
         # Step 1: Agent 1 - Search Query Planner
-        queries = self.planner.plan_queries(claim, self._call_gemini, on_progress)
+        queries, planner_log = self.planner.plan_queries(claim, self._call_gemini, on_progress)
 
-        # Step 2: Agent 2 - Live News Scraper (Date Prioritized)
-        articles = self.scraper.scrape_news(queries, on_progress)
+        # Step 2: Agent 2 - Live News Scraper (Date Prioritized & Detailed RSS Logging)
+        articles, scraper_log = self.scraper.scrape_news(queries, on_progress)
 
         # Build date-aware evidence prompt for Agent 3
         evidence = ""
@@ -112,6 +112,14 @@ Return JSON strictly in this format:
         raw_text = self.analyzer.extract_text(resp)
         result = self.analyzer.parse_json(raw_text)
 
+        analyzer_log = {
+            "prompt_sent": prompt,
+            "model_used": model_used,
+            "used_fallback_google_search": use_search,
+            "raw_gemini_response": raw_text,
+            "parsed_result": result,
+        }
+
         # Attach article source links with pub_date
         sources = []
         for a in articles:
@@ -122,8 +130,16 @@ Return JSON strictly in this format:
             })
         result["grounding_sources"] = sources
 
-        # Save query history log
-        save_history_log(claim, queries, articles, result)
+        # Save complete query history log with raw RSS and Gemini telemetry
+        save_history_log(
+            claim=claim,
+            title=title,
+            text=text,
+            planner_log=planner_log,
+            scraper_log=scraper_log,
+            analyzer_log=analyzer_log,
+            verdict=result,
+        )
 
         logger.info(f"Verification complete: {result.get('verdict')} using model {model_used}")
         report(
