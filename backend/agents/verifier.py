@@ -71,29 +71,30 @@ class GeminiVerifier:
         # Step 2: Agent 2 - Live News Scraper (Date Prioritized & Detailed RSS Logging)
         articles, scraper_log = self.scraper.scrape_news(queries, on_progress)
 
-        # Build date-aware evidence prompt for Agent 3
+        # Build numbered date-aware evidence prompt for Agent 3
         evidence = ""
         if articles:
             evidence_lines = [
-                f"- [Published: {a.get('pub_date', 'Recent')}] {a['title']} (Source: {a['source']})"
-                for a in articles
+                f"Article #{idx + 1}: [Published: {a.get('pub_date', 'Recent')}] \"{a['title']}\" (Source: {a['source']})"
+                for idx, a in enumerate(articles)
             ]
-            evidence = "SCRAPED NEWS EVIDENCE (Ordered by Publication Date - Latest First):\n" + "\n".join(evidence_lines)
+            evidence = "SCRAPED NEWS EVIDENCE (Numbered List, Ordered by Publication Date):\n" + "\n".join(evidence_lines)
 
         today_str = datetime.now().strftime("%B %d, %Y")
 
-        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & news timestamps...")
+        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & article relevance...")
         prompt = f"""You are a professional news fact-checker. Today's date is {today_str}.
 
 Verify this claim: "{claim[:CLAIM_TEXT_TRUNCATE_LEN]}"
 
 {evidence}
 
-STRICT DATE & TEMPORAL EVALUATION RULES:
+STRICT EVALUATION & ARTICLE SELECTION RULES:
 1. Pay STRICT attention to publication dates of news articles versus the claim.
 2. Prioritize recent news articles over outdated ones.
 3. Check if an OLD event (e.g., past rainfall, old accident, past statement from prior months/years) is being re-circulated or misrepresented as CURRENT news today.
-4. Explicitly evaluate the temporal relevance in your explanation and reasoning.
+4. Select ONLY the numbered articles above that are DIRECTLY relevant to verifying or refuting this claim. Exclude unrelated/off-topic articles.
+5. Return 1-indexed article numbers of relevant articles in `relevant_article_indices`.
 
 Return JSON strictly in this format:
 {{
@@ -103,6 +104,7 @@ Return JSON strictly in this format:
   "corrected_news": "actual verified facts including accurate dates",
   "reasoning": ["reason 1 (must analyze dates & source freshness)", "reason 2"],
   "date_analysis": "Clear assessment of news freshness, publication dates, and whether this claim matches current events or is recycled old news",
+  "relevant_article_indices": [1, 2],
   "sources_used": ["source 1", "source 2"]
 }}"""
 
@@ -120,16 +122,40 @@ Return JSON strictly in this format:
             "parsed_result": result,
         }
 
-        # Attach ALL article source links with direct publisher URL and pub_date
-        sources = []
-        for a in articles:
-            sources.append({
+        # Filter grounding_sources to include ONLY relevant articles selected by Gemini
+        raw_indices = result.get("relevant_article_indices", [])
+        valid_indices = set()
+
+        if isinstance(raw_indices, list):
+            for idx_val in raw_indices:
+                try:
+                    i = int(idx_val) - 1
+                    if 0 <= i < len(articles):
+                        valid_indices.add(i)
+                except (ValueError, TypeError):
+                    pass
+
+        # Smart Fallback: if Gemini provided no indices or invalid ones, match against cited sources/titles or top 3
+        if not valid_indices and articles:
+            sources_used_names = [str(s).lower() for s in result.get("sources_used", [])]
+            for idx, a in enumerate(articles):
+                if any(s in a["source"].lower() or s in a["title"].lower() for s in sources_used_names):
+                    valid_indices.add(idx)
+            if not valid_indices:
+                valid_indices = set(range(min(3, len(articles))))
+
+        grounded_sources = []
+        for idx in sorted(valid_indices):
+            a = articles[idx]
+            grounded_sources.append({
                 "title": f"{a['title']} - {a['source']}",
                 "url": a["link"],
                 "publisher_site": a.get("publisher_site", ""),
-                "pub_date": a.get("pub_date", "")
+                "pub_date": a.get("pub_date", ""),
+                "article_index": idx + 1
             })
-        result["grounding_sources"] = sources
+
+        result["grounding_sources"] = grounded_sources
 
         # Save complete query history log with raw RSS and Gemini telemetry
         save_history_log(
@@ -142,7 +168,7 @@ Return JSON strictly in this format:
             verdict=result,
         )
 
-        logger.info(f"Verification complete: {result.get('verdict')} using model {model_used}")
+        logger.info(f"Verification complete: {result.get('verdict')} using model {model_used}. Relevant sources count: {len(grounded_sources)}")
         report(
             on_progress,
             "verification_completed",
