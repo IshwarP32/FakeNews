@@ -47,7 +47,7 @@ class NewsScraperAgent:
         items = []
         for item in root.findall(".//item")[:MAX_RSS_ITEMS_PER_QUERY]:
             title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
+            article_link = (item.findtext("link") or "").strip()
             source_elem = item.find("source")
             source_name = (source_elem.text if source_elem is not None and source_elem.text else "News Agency").strip()
             publisher_site = (source_elem.attrib.get("url") if source_elem is not None else "").strip()
@@ -56,8 +56,7 @@ class NewsScraperAgent:
             if title:
                 items.append({
                     "title": title,
-                    "link": publisher_site if (publisher_site and "news.google.com" not in publisher_site) else link,
-                    "google_rss_link": link,
+                    "link": article_link,
                     "publisher_site": publisher_site,
                     "source": source_name,
                     "pubDate": raw_pub_date
