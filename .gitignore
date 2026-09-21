@@ -82,3 +82,5 @@ Desktop.ini
 *.swo
 *.log
 scratch/
+history_logs/
+**/history_logs/

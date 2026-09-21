@@ -1,6 +1,6 @@
 # VeriScan - Fake News Risk Analyzer (Full-Stack Web App)
 
-A modern full-stack web application designed for explainable misinformation risk evaluation. It pairs a trained scikit-learn TF-IDF + Logistic Regression machine learning model with heuristic feature analysis (sensationalism, urgency cues, formatting/capitalization anomalies, and attribution verification).
+A modern full-stack web application designed for India-focused, evidence-based news verification. The active workflow uses Gemini to plan searches, fetches direct PTI and UNI pages, and asks Gemini to compare the evidence. The previous scikit-learn model remains dormant for now.
 
 ---
 
@@ -30,14 +30,12 @@ FakeNews/
 
 ## Features
 
-- **Trained NLP Classification**: Loads `models/model.joblib` to calculate fake vs. real probability.
-- **Sensationalism & Clickbait Detection**: Scans for emotionally charged clickbait phrases and buzzwords.
-- **Urgency & Alarmism Profiling**: Detects panic words and crisis triggers.
-- **Stylistic & Formatting Analysis**: Identifies abnormal all-caps words, repeated punctuation (`!!`, `???`), and capitalization ratios.
-- **Attribution & Credibility Scoring**: Identifies journalistic citations, official quotes, and reputable source mentions.
-- **Composite 0–100% Risk Score**: Synthesizes all signals into an explainable score and level (`Low Risk`, `Moderate Risk`, `High Risk`, `Critical Risk`).
-- **One-Click Test Presets**: Includes preloaded real news and viral fake stories for fast testing.
-- **Session History Log**: Keeps track of recent analyses during your session.
+- **PTI/UNI Research**: Treats the pasted headline or article as a claim and searches PTI and UNI independently for reporting about that topic.
+- **Separate Scrapers**: Keeps PTI and UNI logic in `pti_scraper.py` and `uni_scraper.py`, coordinated by `source_research.py`.
+- **Gemini Query Planning**: Generates up to three alternative queries per source so different wording, names, and relevant details are less likely to miss matching reports.
+- **Direct Source Fetching**: Uses Google News only for discovery, decodes the result, validates the PTI/UNI hostname, and fetches publisher HTML before returning evidence.
+- **Gemini Evidence Verdict**: Returns `True`, `False`, `Partially True`, or `Unverified`, with confidence, reasoning, corrected news, and source references.
+- **Live Progress Stream**: `POST /api/analyze/stream` returns Server-Sent Events for query planning, source retrieval, evidence collection, verification, and completion. Backend events are timestamped in the `fake_news_risk` logger and mirrored in the frontend timeline and browser console.
 
 ---
 
@@ -58,6 +56,7 @@ web_app\start_all.bat
 ```
 - API Docs (Swagger): http://localhost:8000/docs
 - Health Check: http://localhost:8000/api/health
+- Streaming analysis: `POST http://localhost:8000/api/analyze/stream` (the only analysis endpoint)
 
 #### 2. Frontend (React + Vite)
 ```powershell

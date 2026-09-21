@@ -95,14 +95,13 @@ Observed examples suggest that fake articles commonly have `subject` values such
 ## Current Decisions
 
 - The eventual core output is a **risk assessment with reasons**, not only a fake/real label.
-- The system should combine a measurable baseline/model with interpretable rule or feature signals.
 - Explanations and evidence are part of the product requirement, not a decorative extra.
-- The first useful milestone should be a small, testable local workflow before adding the full frontend, database, or GenAI integration.
 - The project should focus on learning and demonstrating the minimum practical technologies needed for a working solution.
-- The first model input combines available `title` and `text` fields, falling back to whichever field is present; `subject` and `date` are initially analysis-only fields.
-- The first classifier uses the generated `fake/true` labels and provides a model-based fake-news likelihood. A user-facing risk score/level will be added later as a separate explainable layer.
-- The initial implementation uses Python scripts, scikit-learn TF-IDF, Logistic Regression, and joblib model artifacts.
-- The model implementation is split into reusable training functions in `scripts/train_model.py` and a removable presentation walkthrough in `scripts/demo_model.py`.
+- The project target is India-specific news. Source credibility references prioritize Indian publishers (PTI, UNI, PIB, NDTV, The Hindu, Indian Express, etc.).
+- **Architecture (2026-09-21):** Replaced the fragile multi-hop scraping pipeline (Google News RSS → googlenewsdecoder → page scrape → Gemini verdict) with a single Gemini call using **Google Search grounding**. Gemini searches the web directly for evidence about the claim and returns a structured verdict. This eliminated `pti_scraper.py`, `uni_scraper.py`, `gemini_search_planner.py`, and `source_research.py`.
+- The active model is `gemini-3.6-flash` (configurable via `GEMINI_MODEL` env var). Temperature is set to 0 for consistency. The verifier includes a simple retry (3 attempts with 10s/20s backoff) for rate limit errors.
+- The scikit-learn ML predictor (`analyzer.py`) is preserved for reference but not used in the active verification workflow.
+- Backend progress is emitted through the `fake_news_risk` logger and `POST /api/analyze/stream` as SSE events. The frontend renders the same events as a live progress timeline.
 - The large CSV files are stored under `data/` and excluded from version control; generated reports and models are also excluded.
 
 ## Decisions Still Open
@@ -113,8 +112,10 @@ Observed examples suggest that fake articles commonly have `subject` values such
 - Define the risk scale and thresholds, for example low/medium/high.
 - Decide how source reliability will be represented when the input is only article text.
 - Decide which trusted sources and retrieval method will support AI evidence.
+- Define the India-specific source registry, hostname matching rules, and update process for source credibility signals.
+- Add Gemini evidence synthesis after PTI/UNI retrieval is stable; keep the API key server-side and return citations plus uncertainty with the generated summary.
 - Select the GenAI provider/API and define privacy, cost, rate-limit, and failure behavior.
-- Decide whether URL fetching is part of the first demo or a later milestone.
+- Decide whether direct URL fetching is needed after topic-based PTI/UNI evidence lookup is stable.
 - Define the React dashboard screens and the minimum user workflow.
 
 ## Immediate Next Steps
@@ -156,6 +157,7 @@ Observed examples suggest that fake articles commonly have `subject` values such
 ## Validation and Quality Notes
 
 - Keep the current model as a reference so later risk-engine improvements can be compared objectively.
+- Treat the dormant ML model as reference-only until it is deliberately reintroduced into the agentic workflow.
 - Evaluate false positives and false negatives, not only overall accuracy.
 - Treat AI-generated explanations as potentially fallible and show evidence/source context where possible.
 - Avoid claiming certainty about truthfulness when the current model only estimates fake-news likelihood from learned text patterns.
@@ -222,6 +224,19 @@ Observed examples suggest that fake articles commonly have `subject` values such
   - Refactored `scripts/train_model.py` into a thin CLI entry point that imports from `src.fake_news_risk`.
 - Overhauled `.gitignore` with comprehensive sections for Python bytecode, virtual environments, datasets, ML model artifacts, reports, Node/Vite build caches, IDE configs, and OS junk.
 - Updated `README.md` and `AI_CONTEXT.md` with the new hierarchy.
+
+### 2026-09-21 - Replaced scraping pipeline with Gemini Google Search grounding
+
+- **Root cause of inconsistency:** The multi-hop pipeline (Google News RSS → `googlenewsdecoder` → page scrape) silently failed at each hop, causing the same headline to find 0-4 evidence articles randomly. Zero articles → "Unverified"; some articles → "True" or "Partially True".
+- **Fix:** Replaced the entire scraping pipeline with a single Gemini API call using the `google_search` grounding tool. Gemini now searches the web directly for evidence.
+- **Deleted files:** `pti_scraper.py`, `uni_scraper.py`, `gemini_search_planner.py`, `source_research.py` (~400 lines removed).
+- **Rewritten:** `gemini_verifier.py` (~130 lines, down from ~400 across 4 files).
+- **Simplified:** `main.py` (removed scraping orchestration imports).
+- **Updated:** `requirements.txt` (removed `beautifulsoup4`, `googlenewsdecoder`).
+- **Frontend:** `App.jsx` updated to show reasoning bullets, emoji verdict indicators, and grounding source links instead of scraped article cards.
+- **Model:** Changed default from `gemini-2.5-flash` to `gemini-3.6-flash` (higher free-tier quota, `gemini-2.0-flash` was deprecated).
+- **Added:** Simple retry (3 attempts, 10s/20s backoff) for rate limit (429) errors.
+- **Tested:** Chandrayaan-3 headline → True, High confidence, 22 grounding sources. Consistent result.
 
 
 
