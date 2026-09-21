@@ -37,7 +37,7 @@ class NewsScraperAgent:
             return datetime.min
 
     def _fetch_rss_items(self, query: str) -> Tuple[str, List[Dict[str, str]]]:
-        """Executes HTTP request to Google News RSS and returns parsed items."""
+        """Executes HTTP request to Google News RSS and returns parsed items with direct publisher URLs."""
         encoded = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=en-IN&gl=IN&ceid=IN:en"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -48,13 +48,18 @@ class NewsScraperAgent:
         for item in root.findall(".//item")[:MAX_RSS_ITEMS_PER_QUERY]:
             title = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
-            source = (item.findtext("source") or "News Agency").strip()
+            source_elem = item.find("source")
+            source_name = (source_elem.text if source_elem is not None and source_elem.text else "News Agency").strip()
+            publisher_site = (source_elem.attrib.get("url") if source_elem is not None else "").strip()
             raw_pub_date = (item.findtext("pubDate") or "").strip()
+
             if title:
                 items.append({
                     "title": title,
-                    "link": link,
-                    "source": source,
+                    "link": publisher_site if (publisher_site and "news.google.com" not in publisher_site) else link,
+                    "google_rss_link": link,
+                    "publisher_site": publisher_site,
+                    "source": source_name,
                     "pubDate": raw_pub_date
                 })
         return url, items
@@ -110,6 +115,7 @@ class NewsScraperAgent:
             for raw_item in fetched_items:
                 title = raw_item["title"]
                 link = raw_item["link"]
+                publisher_site = raw_item.get("publisher_site", "")
                 source = raw_item["source"]
                 raw_pub_date = raw_item["pubDate"]
 
@@ -121,6 +127,7 @@ class NewsScraperAgent:
                     article_data = {
                         "title": title,
                         "link": link,
+                        "publisher_site": publisher_site,
                         "source": source,
                         "pub_date": formatted_date or "Recent",
                         "_datetime": dt

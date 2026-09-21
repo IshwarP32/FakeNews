@@ -48,8 +48,8 @@ WHITELISTED_DOMAINS = [
 
 # RSS & Article Scraper Limits (Configurable via Environment or defaults)
 MAX_QUERIES_PER_CLAIM = int(os.getenv("MAX_QUERIES_PER_CLAIM", "2"))
-MAX_RSS_ITEMS_PER_QUERY = int(os.getenv("MAX_RSS_ITEMS_PER_QUERY", "6"))
-MAX_FALLBACK_ARTICLES = int(os.getenv("MAX_FALLBACK_ARTICLES", "6"))
+MAX_RSS_ITEMS_PER_QUERY = int(os.getenv("MAX_RSS_ITEMS_PER_QUERY", "12"))
+MAX_FALLBACK_ARTICLES = int(os.getenv("MAX_FALLBACK_ARTICLES", "12"))
 RSS_REQUEST_TIMEOUT = int(os.getenv("RSS_REQUEST_TIMEOUT", "6"))
 
 # ---------------------------------------------------------

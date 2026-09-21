@@ -120,12 +120,13 @@ Return JSON strictly in this format:
             "parsed_result": result,
         }
 
-        # Attach article source links with pub_date
+        # Attach ALL article source links with direct publisher URL and pub_date
         sources = []
         for a in articles:
             sources.append({
                 "title": f"{a['title']} - {a['source']}",
                 "url": a["link"],
+                "publisher_site": a.get("publisher_site", ""),
                 "pub_date": a.get("pub_date", "")
             })
         result["grounding_sources"] = sources
