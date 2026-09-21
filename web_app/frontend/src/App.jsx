@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 const verdictStyles = {
   True: {
@@ -28,11 +28,35 @@ const verdictStyles = {
 };
 
 export default function App() {
-  const [title, setTitle] = useState('');
-  const [text, setText] = useState('');
+  const [title, setTitle] = useState(() => sessionStorage.getItem('fn_title') || '');
+  const [text, setText] = useState(() => sessionStorage.getItem('fn_text') || '');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('fn_result');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [errorMsg, setErrorMsg] = useState('');
+
+  // Persist form state & results across page reloads (survives F5/reload, clears on tab close)
+  useEffect(() => {
+    sessionStorage.setItem('fn_title', title);
+  }, [title]);
+
+  useEffect(() => {
+    sessionStorage.setItem('fn_text', text);
+  }, [text]);
+
+  useEffect(() => {
+    if (result) {
+      sessionStorage.setItem('fn_result', JSON.stringify(result));
+    } else {
+      sessionStorage.removeItem('fn_result');
+    }
+  }, [result]);
 
   const handleAnalyze = async (e) => {
     e?.preventDefault();
@@ -71,6 +95,9 @@ export default function App() {
     setText('');
     setResult(null);
     setErrorMsg('');
+    sessionStorage.removeItem('fn_title');
+    sessionStorage.removeItem('fn_text');
+    sessionStorage.removeItem('fn_result');
   };
 
   const verdictData = result?.verdict || {};
