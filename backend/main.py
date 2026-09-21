@@ -4,7 +4,8 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.routes import analyze_router, health_router
+from backend.routes.analyze import router as analyze_router
+from backend.routes.health import router as health_router
 
 logging.basicConfig(
     level=logging.INFO,
