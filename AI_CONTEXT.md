@@ -4,12 +4,12 @@
 
 ## Project Snapshot
 
-- **Project:** Fake News Risk Analyzer
-- **Current stage:** Full-stack Web Application (FastAPI + React Vite) & Risk Engine
-- **Last updated:** 2026-09-14
+- **Project:** Fake News Risk Analyzer & Multi-Agent Fact Verifier
+- **Current stage:** Reorganized Full-stack Application (`backend/` + `frontend/`) & Multi-Agent Verification System
+- **Last updated:** 2026-09-21
 
-- **Source document:** `docs/proposal.html`
-- **Current workspace:** Contains project documentation under `docs/`, datasets under `data/`, ML package under `src/`, training scripts under `scripts/`, and full-stack app under `web_app/`.
+- **Source document:** `docs/verification_methodology.md`, `docs/source_credibility.md`
+- **Current workspace:** Contains datasets under `data/`, ML model under `models/`, ML source under `src/fake_news_risk/`, training scripts under `scripts/`, reorganized FastAPI service under `backend/`, and modular React frontend under `frontend/`.
 
 
 ## Problem
@@ -18,236 +18,102 @@ Misinformation spreads quickly and can create confusion, fear, and social disrup
 
 ## Proposed Solution
 
-Build an application that analyzes a news title, article, or URL and assigns an explainable misinformation **risk score/level**. The result should consider:
+Build an application that analyzes a news title, article, or claim and assigns an explainable misinformation verdict. The result considers:
 
-- Source reliability
-- Emotional tone
-- Urgency cues
-- Suspicious keywords or language patterns
-- Topic sensitivity
-- Estimated misinformation severity
+- Multi-Agent research pipeline (Query Planner -> News Scraper -> Evidence Analyzer)
+- Source reliability filtering across whitelisted Indian news agencies (PTI, UNI, PIB, TOI, NDTV, etc.)
+- 10-model Gemini fallback list for robust API resilience
+- Query execution history audit logs in `backend/history_logs/`
 - AI-assisted evidence and explanation from trusted-source context
-
-The system should explain why it produced a result. It should not present the risk score as an absolute proof that an article is true or false.
 
 ## High-Level Flow
 
-1. **Input:** News title, article text, or URL
-2. **Preprocess:** Clean text and extract relevant features
-3. **Risk analysis:** Score source, tone, urgency, keywords, and severity
-4. **AI evidence:** Use trusted-source context to explain the result
-5. **Output:** Risk level, reasons, and evidence summary
+1. **Input:** News title, article text, or claim
+2. **Agent 1 (Query Planner):** Formulates targeted search queries for Indian news agencies
+3. **Agent 2 (Live News Scraper):** Scrapes live RSS news feeds and filters against whitelisted outlets
+4. **Agent 3 (Evidence Analyzer):** Cross-examines claim against gathered evidence using Gemini model fallback chain
+5. **Output:** Verdict (True/False/Partially True/Unverified), Confidence level, Executive summary, Reasoning points, Verified sources, and Session history
 
-## Planned Checkpoints
+## Technology Stack
 
-1. **Problem definition:** Finalize the goal, target use case, and boundaries.
-2. **Dataset and baseline:** Review a Kaggle fake/real news dataset and build a baseline text classifier.
-3. **Preprocessing and feature design:** Clean text and extract linguistic/content features such as sentiment, urgency, and suspicious language.
-4. **Risk engine:** Implement scoring for source reliability, emotional tone, topic sensitivity, and misinformation severity.
-5. **Backend and database:** Add backend services, persistence, analyzed articles, scores, and explanations.
-6. **AI evidence layer:** Integrate a GenAI API for evidence-based, user-friendly reasoning.
-7. **Testing and refinement:** Test the complete workflow and improve model/logic quality.
-8. **Final demo and documentation:** Prepare an end-to-end demonstration and document results.
+- **Language/data:** Python 3.14+
+- **NLP/ML:** TF-IDF + Logistic Regression baseline in `src/fake_news_risk/` & `scripts/train_model.py`
+- **Backend:** FastAPI service in `backend/` (`backend/main.py`)
+- **API format:** REST JSON endpoints (`/api/analyze`) & SSE streaming (`/api/analyze/stream`)
+- **Frontend:** React + Vite + Tailwind CSS in `frontend/` (`frontend/src/App.jsx`)
+- **AI Engine:** Google GenAI SDK (`google-genai`) with fallback models
 
-## Technology Direction
+## Workspace Directory Hierarchy
 
-These technologies are suggested by the proposal, but have not been finalized:
-
-- **Language/data:** Python
-- **NLP/ML:** Text preprocessing, TF-IDF, Logistic Regression and/or Naive Bayes
-- **Backend:** Flask or FastAPI
-- **API format:** JSON request/response handling and REST endpoints
-- **Database:** SQLAlchemy or another SQL model layer
-- **Frontend:** React dashboard
-- **AI explanation:** GenAI API with carefully designed prompts
-- **Possible later enhancement:** Vector search or retrieval-based evidence lookup
-
-Do not add a technology until it supports a concrete project requirement. Prefer the smallest stack that can produce a reliable local demo.
-
-## Dataset Inspection
-
-The two Kaggle files were inspected with a streaming CSV script. They were not loaded into memory or printed in full.
-
-| File | Approximate size | Rows | Columns |
-|---|---:|---:|---|
-| `Fake.csv` | 62.8 MB | 23,481 | `title`, `text`, `subject`, `date` |
-| `True.csv` | 53.6 MB | 21,417 | `title`, `text`, `subject`, `date` |
-
-Observed examples suggest that fake articles commonly have `subject` values such as `News`, while true examples include values such as `politicsNews`; this is a dataset characteristic that must be investigated because it could create label leakage if used directly as a model feature. The `date` field also needs normalization and duplicate/date-overlap checks.
-
-### Dataset decision for the first experiment
-
-- Combine both files and add a generated label: `0 = fake`, `1 = true`.
-- Use `title` and `text` as the initial text input, after checking missing values and duplicates.
-- Preserve `subject` and `date` for exploratory analysis and reporting, but exclude them from the first baseline model until leakage is assessed.
-- Use a stratified train/validation/test split with a fixed random seed so results are reproducible.
-- Avoid loading both full dataframes when a streaming or chunked approach is sufficient; the files are large but manageable with a careful local script.
-
-### Dataset limitations to document
-
-- The labels come from the dataset files and may reflect publisher/source conventions rather than universal truth.
-- The examples appear concentrated in a particular news and political time period, so performance may not generalize to current news.
-- A high classification score will not prove that the system can fact-check arbitrary real-world articles.
-- Near-duplicate articles and stylistic/source artifacts may inflate evaluation scores.
-- The initial profile found 5,574 repeated title/text rows after the first occurrence in `Fake.csv` and 221 in `True.csv`.
-- The initial profile found 630 missing text values in `Fake.csv` and 1 in `True.csv`; the first trainer skips rows with no usable title/text.
+```text
+FakeNews/
+├── backend/                   # FastAPI backend service
+│   ├── agents/                # Planner, Scraper, Analyzer, Verifier
+│   ├── config/                # Settings & model fallback list
+│   ├── controllers/           # Endpoint request controllers
+│   ├── routes/                # FastAPI routers (health, analyze)
+│   ├── schemas/               # Pydantic request/response schemas
+│   ├── services/              # History logger & ML predictor
+│   ├── utils/                 # Progress event emitters
+│   ├── main.py                # FastAPI entry point
+│   ├── requirements.txt
+│   └── README.md
+├── frontend/                  # React + Vite user interface
+│   ├── src/
+│   │   ├── assets/
+│   │   ├── components/        # AnalysisForm, AnalysisResult, SourceList, etc.
+│   │   ├── context/           # AnalysisContext state & reload persistence
+│   │   ├── pages/             # Home page
+│   │   ├── services/          # API fetch service
+│   │   ├── App.jsx            # Root composition component
+│   │   └── main.jsx
+│   ├── package.json
+│   └── README.md
+├── data/                      # Kaggle datasets (Fake.csv, True.csv)
+├── docs/                      # Documentation
+├── models/                    # Model artifacts (model.joblib)
+├── reports/                   # Performance reports
+├── scripts/                   # Training scripts (train_model.py)
+├── src/                       # Reusable ML package (fake_news_risk)
+├── .gitignore
+├── AI_CONTEXT.md
+├── package.json
+├── requirements.txt
+├── startAll.bat
+├── startAll.sh
+├── start_backend.bat
+└── start_frontend.bat
+```
 
 ## Current Decisions
 
-- The eventual core output is a **risk assessment with reasons**, not only a fake/real label.
-- Explanations and evidence are part of the product requirement, not a decorative extra.
-- The project should focus on learning and demonstrating the minimum practical technologies needed for a working solution.
-- The project target is India-specific news. Source credibility references prioritize Indian publishers (PTI, UNI, PIB, NDTV, The Hindu, Indian Express, etc.).
-- **Architecture (2026-09-21):** Replaced the fragile multi-hop scraping pipeline (Google News RSS → googlenewsdecoder → page scrape → Gemini verdict) with a single Gemini call using **Google Search grounding**. Gemini searches the web directly for evidence about the claim and returns a structured verdict. This eliminated `pti_scraper.py`, `uni_scraper.py`, `gemini_search_planner.py`, and `source_research.py`.
-- The active model is `gemini-3.6-flash` (configurable via `GEMINI_MODEL` env var). Temperature is set to 0 for consistency. The verifier includes a simple retry (3 attempts with 10s/20s backoff) for rate limit errors.
-- The scikit-learn ML predictor (`analyzer.py`) is preserved for reference but not used in the active verification workflow.
-- Backend progress is emitted through the `fake_news_risk` logger and `POST /api/analyze/stream` as SSE events. The frontend renders the same events as a live progress timeline.
-- The large CSV files are stored under `data/` and excluded from version control; generated reports and models are also excluded.
+- **Multi-Agent Verification Architecture:** 3-Agent pipeline:
+  - **Agent 1 (`planner.py`)**: Generates targeted queries for Indian news sources.
+  - **Agent 2 (`scraper.py`)**: Scrapes live RSS feeds and filters against whitelisted outlets (PTI, UNI, PIB, TOI, NDTV, etc.).
+  - **Agent 3 (`analyzer.py` / `verifier.py`)**: Evaluates evidence against claim and returns structured verdict.
+- **Model Fallback Chain:** Automatically tries 10 fallback models (`gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.0-flash`, `gemini-3-flash`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) if a model is rate-limited (429), busy (503), or unavailable (404).
+- **Session & History Persistence:**
+  - Browser state is persisted across page reloads via `sessionStorage`.
+  - Backend saves timestamped query execution audit logs in `backend/history_logs/`.
+- **Repository Layout Reorganization:** Restructured repository layout into root `backend/`, `frontend/`, and root-level startup scripts (`startAll.bat`, `startAll.sh`, `start_backend.bat`, `start_frontend.bat`), following MediQueue / KingsMove modular standards.
 
-## Decisions Still Open
-
-- Choose Flask versus FastAPI.
-- Choose the initial database and schema.
-- Select and verify the dataset, including its labels, licensing, and limitations.
-- Define the risk scale and thresholds, for example low/medium/high.
-- Decide how source reliability will be represented when the input is only article text.
-- Decide which trusted sources and retrieval method will support AI evidence.
-- Define the India-specific source registry, hostname matching rules, and update process for source credibility signals.
-- Add Gemini evidence synthesis after PTI/UNI retrieval is stable; keep the API key server-side and return citations plus uncertainty with the generated summary.
-- Select the GenAI provider/API and define privacy, cost, rate-limit, and failure behavior.
-- Decide whether direct URL fetching is needed after topic-based PTI/UNI evidence lookup is stable.
-- Define the React dashboard screens and the minimum user workflow.
-
-## Immediate Next Steps
-
-1. Inspect the workspace and confirm the preferred Python environment.
-2. Review the profile report and define duplicate handling before final evaluation.
-3. Define the first narrow vertical slice: text input -> preprocessing -> fake-news likelihood result.
-4. Install dependencies and run the first title-plus-text baseline.
-5. Add a small evaluation script using accuracy, precision, recall, and F1-score.
-6. Compare a title-only baseline with a title-plus-text baseline.
-7. Record every technology and behavior decision in this file as it is made.
-
-## Learning Requirements
-
-### Must learn
-
-- Python basics and data handling
-- NLP cleaning, tokenization, stop words, stemming/lemmatization
-- Text classification with TF-IDF, Logistic Regression, and/or Naive Bayes
-- REST APIs with Flask or FastAPI
-- JSON and request/response handling
-- GenAI API calls and prompt design
-- SQLAlchemy or equivalent SQL model operations
-- React basics for a simple dashboard
-
-### Recommended
-
-- Sentiment analysis and keyword feature extraction
-- Accuracy, precision, recall, and F1-score
-- Presenting model outputs in a web app
-- Basic local deployment or hosting
-
-### Optional
-
-- Vector search or retrieval-based evidence lookup
-- Advanced prompt engineering
-- Topic modeling or clustering
-
-## Validation and Quality Notes
-
-- Keep the current model as a reference so later risk-engine improvements can be compared objectively.
-- Treat the dormant ML model as reference-only until it is deliberately reintroduced into the agentic workflow.
-- Evaluate false positives and false negatives, not only overall accuracy.
-- Treat AI-generated explanations as potentially fallible and show evidence/source context where possible.
-- Avoid claiming certainty about truthfulness when the current model only estimates fake-news likelihood from learned text patterns.
-- Test empty, very short, very long, malformed, and unsupported inputs.
-- Keep secrets such as API keys out of source files and version control.
+---
 
 ## Progress Log
 
-### 2026-09-07 - Initial context created
+### 2026-09-21 - Repository Reorganization (MediQueue / KingsMove standard)
 
-- Read `proposal.html`.
-- Confirmed the project scope, high-level flow, planned checkpoints, and learning requirements.
-- Confirmed that the workspace contains two large Kaggle datasets under `data/`: `Fake.csv` and `True.csv`.
-- Confirmed both datasets have columns `title`, `text`, `subject`, and `date`.
-- Counted 23,481 fake rows and 21,417 true rows using a streaming script.
-- Decided to start with `title + text` and keep `subject/date` out of the first model pending leakage checks.
-- Confirmed that no implementation files existed at the start of the project.
-- Created this handoff document.
-- The dataset has now been selected locally; framework, model algorithm, API provider, and database have not been finalized.
-
-### 2026-09-07 - Baseline structure and profile created
-
-- Added `scripts/train_model.py` for TF-IDF plus Logistic Regression experiments.
-- Added `requirements.txt`, `README.md`, `.gitignore`, and the initial `src/fake_news_risk` package.
-- Python 3.14.6 is available; scikit-learn dependencies still need to be installed before training.
-- The baseline was later trained successfully and produced `models/baseline_title-text.joblib` and `reports/baseline_title-text.json`.
-- The trainer was refactored into reusable functions, with presentation output moved to a separate `scripts/demo_model.py` module.
-- Removed the mode argument; training now selects title, text, or title plus text automatically per row and saves `model.joblib` and `performance_report.json`.
-- Removed the redundant profiling script and generated profile JSON after recording its findings here.
-- Moved `True.csv` into `data/` and copied `Fake.csv` into `data/`; the original root `Fake.csv` could not be deleted because another Windows process has it open. Close the process/editor lock and remove the root copy when possible.
-
-### 2026-09-14 - Git upstream push and full-stack web_app created
-
-- Initialized Git repository on branch `main`, verified `.gitignore` rules to keep datasets/models/virtualenv excluded.
-- Connected remote origin `https://github.com/IshwarP32/FakeNews.git` and successfully pushed upstream.
-- Created dedicated application directory `web_app/` housing both backend and frontend.
-- Finalized backend framework as **FastAPI** (`web_app/backend/`):
-  - Built `RiskAnalyzer` module loading `models/model.joblib` and combining ML prediction with explainable heuristic features (sensationalism keywords, urgency triggers, all-caps formatting, exclamation analysis, and source attribution).
-  - Exposed endpoints: `GET /api/health`, `GET /api/presets`, `POST /api/analyze`, `GET /api/history`, `DELETE /api/history`.
-- Created frontend in **React + Vite** (`web_app/frontend/`):
-  - Designed modern dark-mode glassmorphic UI with animated glowing risk gauge, breakdown progress bars, signal tag badges, explainable bullet points, one-click test presets, and session history log.
-  - Verified Vite dev proxy to port 8000 and confirmed end-to-end API communication.
-- Added launcher scripts: `web_app/start_backend.bat`, `web_app/start_frontend.bat`, `web_app/start_all.bat`, and `web_app/README.md`.
-
-### 2026-09-14 - Refactor: Tailwind CSS v4 and ChatGPT-style Minimalist UI
-
-- Replaced custom CSS system with **Tailwind CSS v4** (`@tailwindcss/vite`).
-- Scrapped extraneous heuristic metrics, preset lists, and session history code across backend and frontend per user direction.
-- Refactored `analyzer.py` and `main.py` to directly return pure model-based fake score and prediction.
-- Built a distraction-free, ChatGPT-style minimalist UI in `App.jsx`:
-  - Centered clean layout with dark theme (`#212121`).
-  - Inputs for headline and article text.
-  - "Analyze" and "Clear" actions.
-  - Clean score card output indicating model fake likelihood % and prediction (Fake vs Real).
-
-### 2026-09-14 - Folder structure & .gitignore reorganization
-
-- Consolidated documentation into a unified `docs/` folder:
-  - Moved `proposal.html` -> `docs/proposal.html`.
-  - Moved `documents/source_credibility.md` -> `docs/source_credibility.md` and removed temporary `documents/` directory.
-- Structured Python core library under `src/fake_news_risk/`:
-  - Added `src/fake_news_risk/classifier.py` containing reusable pipeline builder, data loader, trainer, and evaluator.
-  - Exported core functions through `src/fake_news_risk/__init__.py`.
-  - Refactored `scripts/train_model.py` into a thin CLI entry point that imports from `src.fake_news_risk`.
-- Overhauled `.gitignore` with comprehensive sections for Python bytecode, virtual environments, datasets, ML model artifacts, reports, Node/Vite build caches, IDE configs, and OS junk.
-- Updated `README.md` and `AI_CONTEXT.md` with the new hierarchy.
-
-### 2026-09-21 - Replaced scraping pipeline with Gemini Google Search grounding
-
-- **Root cause of inconsistency:** The multi-hop pipeline (Google News RSS → `googlenewsdecoder` → page scrape) silently failed at each hop, causing the same headline to find 0-4 evidence articles randomly. Zero articles → "Unverified"; some articles → "True" or "Partially True".
-- **Fix:** Replaced the entire scraping pipeline with a single Gemini API call using the `google_search` grounding tool. Gemini now searches the web directly for evidence.
-- **Deleted files:** `pti_scraper.py`, `uni_scraper.py`, `gemini_search_planner.py`, `source_research.py` (~400 lines removed).
-- **Rewritten:** `gemini_verifier.py` (~130 lines, down from ~400 across 4 files).
-- **Simplified:** `main.py` (removed scraping orchestration imports).
-- **Updated:** `requirements.txt` (removed `beautifulsoup4`, `googlenewsdecoder`).
-- **Frontend:** `App.jsx` updated to show reasoning bullets, emoji verdict indicators, and grounding source links instead of scraped article cards.
-- **Model:** Changed default from `gemini-2.5-flash` to `gemini-3.6-flash` (higher free-tier quota, `gemini-2.0-flash` was deprecated).
-- **Added:** Simple retry (3 attempts, 10s/20s backoff) for rate limit (429) errors.
-- **Tested:** Chandrayaan-3 headline → True, High confidence, 22 grounding sources. Consistent result.
-
-
-
-
-## Update Protocol for Future Agents
-
-When continuing the project:
-
-1. Read this file before changing code.
-2. Check the current workspace state and tests against the progress recorded here.
-3. Record important decisions before or immediately after implementing them.
-4. Keep completed work, current work, blockers, and next steps accurate.
-5. Do not silently replace an earlier decision; explain the reason and date the change.
-6. Update the progress log after each meaningful milestone.
+- Moved application code out of `web_app/` into root `backend/` and `frontend/`.
+- Modularized backend:
+  - `backend/config/`: App settings, paths, logger, fallback models list.
+  - `backend/schemas/`: Pydantic request/response schemas.
+  - `backend/utils/`: Progress event emitters.
+  - `backend/services/`: History logger and ML model predictor.
+  - `backend/agents/`: Agent 1 (Planner), Agent 2 (Scraper), Agent 3 (Analyzer), and `GeminiVerifier`.
+  - `backend/controllers/`: Request orchestration controllers.
+  - `backend/routes/`: Health & Analyze FastAPI routers.
+- Modularized frontend:
+  - Split `App.jsx` into `AnalysisForm`, `AnalysisResult`, `SourceList`, `LoadingState`, `ErrorMessage`, `Home` page, and `AnalysisContext`.
+  - Added `frontend/src/services/analysisApi.js` API client.
+- Added root launcher scripts (`startAll.bat`, `startAll.sh`, `start_backend.bat`, `start_frontend.bat`).
+- Updated `README.md`, `backend/README.md`, `frontend/README.md`, `.gitignore`, and `AI_CONTEXT.md`.

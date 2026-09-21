@@ -1,0 +1,11 @@
+{
+  "name": "fakenews-root",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-Agent Fake News Risk Analyzer & Fact Verification System",
+  "scripts": {
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "start:backend": "python -m uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000"
+  }
+}
