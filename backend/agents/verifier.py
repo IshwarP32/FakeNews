@@ -11,7 +11,7 @@ from google.genai import types
 from backend.agents.analyzer import EvidenceAnalyzerAgent
 from backend.agents.planner import QueryPlannerAgent
 from backend.agents.scraper import NewsScraperAgent
-from backend.config import FALLBACK_MODELS, logger
+from backend.config import CLAIM_TEXT_TRUNCATE_LEN, FALLBACK_MODELS, logger
 from backend.services.history import save_history_log
 from backend.utils.progress import ProgressCallback, report
 
@@ -85,7 +85,7 @@ class GeminiVerifier:
         report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & news timestamps...")
         prompt = f"""You are a professional news fact-checker. Today's date is {today_str}.
 
-Verify this claim: "{claim[:3000]}"
+Verify this claim: "{claim[:CLAIM_TEXT_TRUNCATE_LEN]}"
 
 {evidence}
 

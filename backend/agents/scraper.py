@@ -6,31 +6,16 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
-from backend.config import logger
+
+from backend.config import (
+    ALLOWED_SOURCES,
+    MAX_FALLBACK_ARTICLES,
+    MAX_RSS_ITEMS_PER_QUERY,
+    RSS_REQUEST_TIMEOUT,
+    WHITELISTED_DOMAINS,
+    logger,
+)
 from backend.utils.progress import ProgressCallback, report
-
-# Whitelist of trusted Indian news agencies and outlets
-ALLOWED_SOURCES = [
-    "pti", "press trust of india",
-    "uni", "united news of india",
-    "pib", "press information bureau",
-    "ndtv", "the hindu", "indian express",
-    "times of india", "toi", "hindustan times",
-    "theprint", "ani", "firstpost", "mid-day", "theweek"
-]
-
-WHITELISTED_DOMAINS = [
-    "ndtv.com",
-    "thehindu.com",
-    "indianexpress.com",
-    "timesofindia.indiatimes.com",
-    "hindustantimes.com",
-    "pib.gov.in",
-    "theprint.in",
-    "firstpost.com",
-    "mid-day.com",
-    "theweek.in"
-]
 
 
 class NewsScraperAgent:
@@ -56,11 +41,11 @@ class NewsScraperAgent:
         encoded = urllib.parse.quote(query)
         url = f"https://news.google.com/rss/search?q={encoded}&hl=en-IN&gl=IN&ceid=IN:en"
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=6) as resp:
+        with urllib.request.urlopen(req, timeout=RSS_REQUEST_TIMEOUT) as resp:
             root = ET.fromstring(resp.read())
 
         items = []
-        for item in root.findall(".//item")[:6]:
+        for item in root.findall(".//item")[:MAX_RSS_ITEMS_PER_QUERY]:
             title = (item.findtext("title") or "").strip()
             link = (item.findtext("link") or "").strip()
             source = (item.findtext("source") or "News Agency").strip()
@@ -100,7 +85,7 @@ class NewsScraperAgent:
             }
 
             # Pass 1: Targeted search applying site: filters directly in Google RSS query
-            targeted_q = f"{base_q} ({site_filter_operator})"
+            targeted_q = f"{base_q} ({site_filter_operator})" if site_filter_operator else base_q
             fetched_items = []
             try:
                 url, fetched_items = self._fetch_rss_items(targeted_q)
@@ -150,7 +135,7 @@ class NewsScraperAgent:
 
             queries_log.append(query_log)
 
-        candidates = articles if articles else fallback_articles[:6]
+        candidates = articles if articles else fallback_articles[:MAX_FALLBACK_ARTICLES]
         # Sort candidates chronologically (most recent news articles first)
         candidates.sort(key=lambda a: a.get("_datetime", datetime.min), reverse=True)
 
