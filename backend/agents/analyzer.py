@@ -28,20 +28,26 @@ class EvidenceAnalyzerAgent:
             match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
             cleaned = match.group(1).strip() if match else cleaned.split("```")[1]
         try:
-            return json.loads(cleaned)
+            res = json.loads(cleaned)
+            if isinstance(res, dict):
+                return res
         except Exception:
             match = re.search(r"\{.*\}", raw_text, re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group(0))
+                    res = json.loads(match.group(0))
+                    if isinstance(res, dict):
+                        return res
                 except Exception:
                     pass
             logger.error("JSON parsing failed, returning fallback result.")
-            return {
-                "verdict": "Unverified",
-                "confidence": "Low",
-                "summary": raw_text[:300] if raw_text else "Could not parse verdict.",
-                "corrected_news": "",
-                "reasoning": [raw_text] if raw_text else ["Response parse error"],
-                "sources_used": []
-            }
+        
+        return {
+            "verdict": "Unverified",
+            "confidence": "Low",
+            "summary": raw_text[:300] if raw_text else "Could not parse verdict.",
+            "corrected_news": "",
+            "reasoning": [raw_text] if raw_text else ["Response parse error"],
+            "date_analysis": "Date analysis unavailable due to parse error.",
+            "sources_used": []
+        }

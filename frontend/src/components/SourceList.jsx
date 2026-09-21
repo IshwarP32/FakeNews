@@ -8,7 +8,7 @@ export default function SourceList({ sources, sourceUrls }) {
   return (
     <div className="border-t border-white/10 pt-4 mt-1">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-[#8e8e8e] mb-3">
-        Scraped News Evidence Outlets
+        Scraped News Evidence Outlets (Ordered by Date)
       </h3>
       <div className="grid gap-2.5 md:grid-cols-2">
         {sources && sources.length > 0
@@ -18,9 +18,18 @@ export default function SourceList({ sources, sourceUrls }) {
                 href={src.url}
                 target="_blank"
                 rel="noreferrer"
-                className="bg-[#242424] border border-white/10 p-3 rounded-xl hover:border-white/30 transition block"
+                className="bg-[#242424] border border-white/10 p-3 rounded-xl hover:border-white/30 transition block group"
               >
-                <p className="text-xs font-medium text-[#ececec] truncate">{src.title || src.url}</p>
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <p className="text-xs font-medium text-[#ececec] truncate group-hover:text-white">
+                    {src.title || src.url}
+                  </p>
+                  {src.pub_date && (
+                    <span className="text-[10px] bg-white/10 text-white/70 px-2 py-0.5 rounded-full shrink-0">
+                      📅 {src.pub_date}
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-[#787878] truncate mt-0.5">{src.url}</p>
               </a>
             ))

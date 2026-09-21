@@ -2,6 +2,7 @@
 
 import os
 import time
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from google import genai
@@ -67,28 +68,41 @@ class GeminiVerifier:
         # Step 1: Agent 1 - Search Query Planner
         queries = self.planner.plan_queries(claim, self._call_gemini, on_progress)
 
-        # Step 2: Agent 2 - Live News Scraper
+        # Step 2: Agent 2 - Live News Scraper (Date Prioritized)
         articles = self.scraper.scrape_news(queries, on_progress)
 
-        # Build evidence prompt for Agent 3
+        # Build date-aware evidence prompt for Agent 3
         evidence = ""
         if articles:
-            evidence = "SCRAPED NEWS EVIDENCE:\n" + "\n".join(
-                [f"- {a['title']} (Source: {a['source']})" for a in articles]
-            )
+            evidence_lines = [
+                f"- [Published: {a.get('pub_date', 'Recent')}] {a['title']} (Source: {a['source']})"
+                for a in articles
+            ]
+            evidence = "SCRAPED NEWS EVIDENCE (Ordered by Publication Date - Latest First):\n" + "\n".join(evidence_lines)
 
-        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim...")
-        prompt = f"""You are a news fact-checker. Verify this claim: "{claim[:3000]}"
+        today_str = datetime.now().strftime("%B %d, %Y")
+
+        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & news timestamps...")
+        prompt = f"""You are a professional news fact-checker. Today's date is {today_str}.
+
+Verify this claim: "{claim[:3000]}"
 
 {evidence}
+
+STRICT DATE & TEMPORAL EVALUATION RULES:
+1. Pay STRICT attention to publication dates of news articles versus the claim.
+2. Prioritize recent news articles over outdated ones.
+3. Check if an OLD event (e.g., past rainfall, old accident, past statement from prior months/years) is being re-circulated or misrepresented as CURRENT news today.
+4. Explicitly evaluate the temporal relevance in your explanation and reasoning.
 
 Return JSON strictly in this format:
 {{
   "verdict": "True|False|Partially True|Unverified",
   "confidence": "High|Medium|Low",
-  "summary": "2 sentence explanation",
-  "corrected_news": "actual facts",
-  "reasoning": ["reason 1", "reason 2"],
+  "summary": "2 sentence explanation with explicit date context",
+  "corrected_news": "actual verified facts including accurate dates",
+  "reasoning": ["reason 1 (must analyze dates & source freshness)", "reason 2"],
+  "date_analysis": "Clear assessment of news freshness, publication dates, and whether this claim matches current events or is recycled old news",
   "sources_used": ["source 1", "source 2"]
 }}"""
 
@@ -98,10 +112,14 @@ Return JSON strictly in this format:
         raw_text = self.analyzer.extract_text(resp)
         result = self.analyzer.parse_json(raw_text)
 
-        # Attach article source links
+        # Attach article source links with pub_date
         sources = []
         for a in articles:
-            sources.append({"title": f"{a['title']} - {a['source']}", "url": a["link"]})
+            sources.append({
+                "title": f"{a['title']} - {a['source']}",
+                "url": a["link"],
+                "pub_date": a.get("pub_date", "")
+            })
         result["grounding_sources"] = sources
 
         # Save query history log

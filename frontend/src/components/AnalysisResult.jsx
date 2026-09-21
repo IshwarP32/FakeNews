@@ -62,6 +62,19 @@ export default function AnalysisResult({ result }) {
         </div>
       )}
 
+      {/* Date & News Freshness Assessment */}
+      {verdictData.date_analysis && (
+        <div className="bg-blue-950/20 border border-blue-500/20 p-4 rounded-xl">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-xs">🕒</span>
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-blue-400">
+              Temporal & Date Freshness Analysis
+            </h3>
+          </div>
+          <p className="text-xs text-[#c0d4f5] leading-relaxed">{verdictData.date_analysis}</p>
+        </div>
+      )}
+
       {/* Reasoning Bullet Points */}
       {verdictData.reasoning && verdictData.reasoning.length > 0 && (
         <div>
