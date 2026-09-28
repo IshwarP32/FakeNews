@@ -71,6 +71,8 @@ The trainer loads `data/Fake.csv` and `data/True.csv`, builds a TF-IDF vectorize
 
 ## Running the Web Application
 
+For free Render and Vercel deployment, see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 ### Option A: 1-Click Launchers
 - **Windows**: Double-click `startAll.bat`
 - **Linux/macOS**: `bash startAll.sh`
