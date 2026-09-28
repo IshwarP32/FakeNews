@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { analyzeClaimApi } from '../services/analysisApi';
+import { analyzeClaimStreamApi } from '../services/analysisApi';
 
 const AnalysisContext = createContext();
 
@@ -16,6 +16,7 @@ export function AnalysisProvider({ children }) {
     }
   });
   const [errorMsg, setErrorMsg] = useState('');
+  const [activeStep, setActiveStep] = useState(0);
 
   useEffect(() => {
     sessionStorage.setItem('fn_title', title);
@@ -43,9 +44,18 @@ export function AnalysisProvider({ children }) {
     setErrorMsg('');
     setIsAnalyzing(true);
     setResult(null);
+    setActiveStep(1);
 
     try {
-      const data = await analyzeClaimApi({ title, text });
+      const data = await analyzeClaimStreamApi({
+        title,
+        text,
+        onProgress: ({ event }) => {
+          if (event === 'query_planning') setActiveStep(1);
+          if (event === 'web_scraping') setActiveStep(2);
+          if (event === 'analyzing_evidence') setActiveStep(3);
+        },
+      });
       setResult(data);
     } catch (err) {
       setErrorMsg(err.message || 'Unable to connect to server.');
@@ -59,6 +69,7 @@ export function AnalysisProvider({ children }) {
     setText('');
     setResult(null);
     setErrorMsg('');
+    setActiveStep(0);
     sessionStorage.removeItem('fn_title');
     sessionStorage.removeItem('fn_text');
     sessionStorage.removeItem('fn_result');
@@ -74,6 +85,7 @@ export function AnalysisProvider({ children }) {
         isAnalyzing,
         result,
         errorMsg,
+        activeStep,
         handleAnalyze,
         handleClear,
         hasContent: Boolean(title || text || result),

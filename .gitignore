@@ -85,3 +85,4 @@ scratch/
 history_logs/
 **/history_logs/
 .web_app_trash/
+docs/

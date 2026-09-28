@@ -1,61 +1,34 @@
 import React from 'react';
+import { Activity, Zap } from 'lucide-react';
 import { useAnalysis } from '../context/AnalysisContext';
 import AnalysisForm from '../components/AnalysisForm';
 import ErrorMessage from '../components/ErrorMessage';
 import LoadingState from '../components/LoadingState';
 import AnalysisResult from '../components/AnalysisResult';
+import AgentTimeline from '../components/AgentTimeline';
+import SourceList from '../components/SourceList';
+import MLPrediction from '../components/MLPrediction';
+
+const quickSamples = [
+  { label: 'IIT Bombay Caste Case (Real)', title: 'IIT Bombay caste discrimination case reported by official sources', text: '' },
+  { label: 'Chandrayaan-3 Launch (Real)', title: 'Chandrayaan-3 successfully launched by ISRO', text: '' },
+  { label: 'RBI ₹500 Note Ban (Fake)', title: 'RBI announces a ban on all ₹500 notes', text: '' },
+];
 
 export default function Home() {
-  const {
-    title,
-    setTitle,
-    text,
-    setText,
-    isAnalyzing,
-    result,
-    errorMsg,
-    handleAnalyze,
-    handleClear,
-    hasContent,
-  } = useAnalysis();
-
+  const { title, setTitle, text, setText, isAnalyzing, activeStep, result, errorMsg, handleAnalyze, handleClear, hasContent } = useAnalysis();
+  const applySample = (sample) => { setTitle(sample.title); setText(sample.text); };
   return (
-    <div className="min-h-screen bg-[#1e1e1e] text-[#ececec] flex flex-col items-center px-4 py-8 md:py-12 selection:bg-[#404040]">
-      {/* Top Header */}
-      <header className="w-full max-w-3xl mb-8 flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-base font-bold text-white shadow-sm">
-            FN
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-[#ececec]">Fake News Risk Analyzer</h1>
-            <p className="text-xs text-[#8e8e8e]">Multi-Agent Fact Verification System</p>
-          </div>
+    <div className="app-shell">
+      <main className="workspace">
+        <section className="intro-row"><div><p className="eyebrow">MULTI-AGENT INTELLIGENCE TOOL</p><h1>Verify news authenticity<br />in real-time.</h1><p className="intro-copy">Our multi-agent system formulates search queries, scrapes live news feeds (PTI, UNI, PIB), and cross-examines claims.</p></div><div className="sample-area"><p className="eyebrow">QUICK TEST SAMPLES</p><div className="sample-row">{quickSamples.map((sample) => <button key={sample.label} type="button" className="sample-button" onClick={() => applySample(sample)}><Zap size={12} />{sample.label}</button>)}</div></div></section>
+        <div className="analysis-grid">
+          <aside className="control-column"><div className="panel-heading"><span>01 / CLAIM INPUT</span><Activity size={15} /></div><AnalysisForm title={title} setTitle={setTitle} text={text} setText={setText} onSubmit={handleAnalyze} onClear={handleClear} isAnalyzing={isAnalyzing} hasContent={hasContent} /><ErrorMessage message={errorMsg} /><LoadingState isAnalyzing={isAnalyzing} /><div className="panel-heading result-heading"><span>02 / AI VERDICT</span><span className="live-label">{result ? 'RESULT READY' : 'AWAITING INPUT'}</span></div><AnalysisResult result={result} /></aside>
+          <section className="result-column"><AgentTimeline isAnalyzing={isAnalyzing} activeStep={activeStep} result={result} /><div className="panel-heading ml-heading"><span>04 / ML PREDICTION</span><span className="live-label">LOCAL CLASSIFIER</span></div><MLPrediction result={result} /></section>
         </div>
-        <span className="text-xs text-[#a0a0a0] bg-white/5 border border-white/10 px-3 py-1 rounded-full font-medium">
-          Multi-Agent Pipeline
-        </span>
-      </header>
-
-      {/* Main Content */}
-      <main className="w-full max-w-3xl flex flex-col gap-6">
-        <AnalysisForm
-          title={title}
-          setTitle={setTitle}
-          text={text}
-          setText={setText}
-          onSubmit={handleAnalyze}
-          onClear={handleClear}
-          isAnalyzing={isAnalyzing}
-          hasContent={hasContent}
-        />
-
-        <ErrorMessage message={errorMsg} />
-
-        <LoadingState isAnalyzing={isAnalyzing} />
-
-        <AnalysisResult result={result} />
+        <section className="evidence-section"><div className="evidence-heading"><div><p className="eyebrow">05 / LIVE SOURCE GROUNDING</p><h2>Scraped News Evidence Outlets</h2></div>{result?.verdict?.grounding_sources?.length ? <span className="outlet-count">{result.verdict.grounding_sources.length} VERIFIED OUTLETS</span> : null}</div><SourceList sources={result?.verdict?.grounding_sources || []} sourceUrls={result?.verdict?.sources_used || []} /></section>
       </main>
+      <footer><span>TRUTH//SIGNAL</span><span>AI output is probabilistic. Inspect the cited evidence.</span></footer>
     </div>
   );
 }

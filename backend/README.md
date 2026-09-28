@@ -34,6 +34,7 @@ backend/
 - `GET /api/health`: Health check endpoint.
 - `POST /api/analyze`: Non-streaming news claim verification endpoint.
 - `POST /api/analyze/stream`: Server-Sent Events (SSE) streaming endpoint for live agent execution progress.
+- `ml_prediction` in analysis responses: baseline and learned fake-news probabilities.
 
 ## Setup & Running
 
@@ -42,6 +43,10 @@ backend/
    GEMINI_API_KEY=your_gemini_api_key
    GEMINI_MODEL=gemini-3.6-flash
    ```
+
+## Deployment
+
+See [`docs/deployment.md`](../docs/deployment.md) for Render backend and Vercel frontend setup, environment variables, CORS, and the ML artifact requirement.
 
 2. Start the FastAPI server:
    ```bash

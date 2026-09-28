@@ -1,105 +1,23 @@
 import React from 'react';
-import SourceList from './SourceList';
+import { AlertTriangle, CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
 
 const verdictStyles = {
-  True: {
-    badge: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-    icon: '✅',
-    label: 'Verified True',
-    border: 'border-emerald-500/20 bg-emerald-950/10',
-  },
-  False: {
-    badge: 'bg-rose-500/15 text-rose-400 border-rose-500/30',
-    icon: '❌',
-    label: 'Fabricated / False',
-    border: 'border-rose-500/20 bg-rose-950/10',
-  },
-  'Partially True': {
-    badge: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
-    icon: '⚠️',
-    label: 'Partially True',
-    border: 'border-amber-500/20 bg-amber-950/10',
-  },
-  Unverified: {
-    badge: 'bg-slate-500/15 text-slate-400 border-slate-500/30',
-    icon: '❓',
-    label: 'Unverified',
-    border: 'border-white/10 bg-[#292929]',
-  },
+  True: { icon: CheckCircle2, label: 'Verified True', tone: 'true' },
+  False: { icon: XCircle, label: 'Fabricated / False', tone: 'false' },
+  'Partially True': { icon: AlertTriangle, label: 'Partially True', tone: 'partial' },
+  Unverified: { icon: CircleHelp, label: 'Unverified', tone: 'neutral' },
 };
 
 export default function AnalysisResult({ result }) {
-  if (!result) return null;
-
-  const verdictData = result?.verdict || {};
-  const verdictKey = verdictData.verdict || 'Unverified';
-  const style = verdictStyles[verdictKey] || verdictStyles.Unverified;
-  const sources = verdictData.grounding_sources || [];
-  const sourceUrls = verdictData.sources_used || [];
-
-  return (
-    <div className={`border rounded-2xl p-6 flex flex-col gap-5 shadow-2xl transition ${style.border}`}>
-      {/* Verdict Header */}
-      <div className="flex items-center justify-between border-b border-white/10 pb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">{style.icon}</span>
-          <div>
-            <span className="text-xs uppercase tracking-wider text-[#8e8e8e] block font-medium">Verdict</span>
-            <h2 className="text-xl font-bold text-white">{style.label}</h2>
-          </div>
-        </div>
-
-        <span className={`text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full border ${style.badge}`}>
-          {verdictData.confidence || 'Low'} Confidence
-        </span>
-      </div>
-
-      {/* Summary */}
-      {verdictData.summary && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#8e8e8e] mb-1.5">Executive Summary</h3>
-          <p className="text-sm text-[#d8d8d8] leading-relaxed">{verdictData.summary}</p>
-        </div>
-      )}
-
-      {/* Date & News Freshness Assessment */}
-      {verdictData.date_analysis && (
-        <div className="bg-blue-950/20 border border-blue-500/20 p-4 rounded-xl">
-          <div className="flex items-center gap-2 mb-1.5">
-            <span className="text-xs">🕒</span>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-blue-400">
-              Temporal & Date Freshness Analysis
-            </h3>
-          </div>
-          <p className="text-xs text-[#c0d4f5] leading-relaxed">{verdictData.date_analysis}</p>
-        </div>
-      )}
-
-      {/* Reasoning Bullet Points */}
-      {verdictData.reasoning && verdictData.reasoning.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#8e8e8e] mb-2">Key Findings & Evidence</h3>
-          <ul className="flex flex-col gap-2">
-            {verdictData.reasoning.map((reason, i) => (
-              <li key={i} className="flex items-start gap-2.5 text-xs text-[#c8c8c8] leading-relaxed">
-                <span className="text-white/40 mt-0.5">•</span>
-                <span>{reason}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Corrected News */}
-      {verdictData.corrected_news && (
-        <div className="bg-black/20 border border-white/5 p-4 rounded-xl">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-[#8e8e8e] mb-1">Verified Fact Context</h3>
-          <p className="text-xs text-[#b8b8b8] leading-relaxed italic">"{verdictData.corrected_news}"</p>
-        </div>
-      )}
-
-      {/* Referenced Sources */}
-      <SourceList sources={sources} sourceUrls={sourceUrls} />
-    </div>
-  );
+  if (!result) return <div className="result-panel empty-result"><span>Submit a claim to initialize analysis output.</span></div>;
+  const verdict = result.verdict || {};
+  const style = verdictStyles[verdict.verdict] || verdictStyles.Unverified;
+  const Icon = style.icon;
+  return <div className={`result-panel tone-${style.tone}`}>
+    <div className="verdict-header"><div className="verdict-title"><span className="verdict-icon"><Icon size={22} /></span><div><p className="eyebrow">AI VERDICT</p><h2>{style.label}</h2></div></div><span className="status-chip">{verdict.confidence || 'Low'} CONFIDENCE</span></div>
+    {verdict.summary && <div className="content-block"><h3>EXECUTIVE SUMMARY</h3><p>{verdict.summary}</p></div>}
+    {verdict.date_analysis && <div className="notice-block"><h3>DATE / FRESHNESS CHECK</h3><p>{verdict.date_analysis}</p></div>}
+    {verdict.reasoning?.length > 0 && <div className="content-block"><h3>KEY FINDINGS</h3><ul className="findings-list">{verdict.reasoning.map((reason, index) => <li key={index}><span>0{index + 1}</span>{reason}</li>)}</ul></div>}
+    {verdict.corrected_news && <div className="content-block corrected"><h3>VERIFIED FACT CONTEXT</h3><p>"{verdict.corrected_news}"</p></div>}
+  </div>;
 }

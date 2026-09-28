@@ -89,12 +89,17 @@ Verify this claim: "{claim[:CLAIM_TEXT_TRUNCATE_LEN]}"
 
 {evidence}
 
-STRICT EVALUATION & ARTICLE SELECTION RULES:
-1. Pay STRICT attention to publication dates of news articles versus the claim.
-2. Prioritize recent news articles over outdated ones.
-3. Check if an OLD event (e.g., past rainfall, old accident, past statement from prior months/years) is being re-circulated or misrepresented as CURRENT news today.
-4. Select ONLY the numbered articles above that are DIRECTLY relevant to verifying or refuting this claim. Exclude unrelated/off-topic articles.
-5. Return 1-indexed article numbers of relevant articles in `relevant_article_indices`.
+STRICT TEMPORAL EVALUATION RULES:
+1. First classify the claim's temporal scope as `Historical`, `Current-specific`, or `Undated factual`.
+2. An `Undated factual` claim states whether an event happened, without saying today, currently, this year, latest, ongoing, or giving a date. Judge it against the event's historical truth. Do NOT mark it false merely because the event happened before {today_str}.
+3. For an `Undated factual` claim, an authoritative report from the event's actual year is valid evidence. Example: "Chandrayaan-3 successfully launched by ISRO" is true because the launch occurred in 2023; the absence of a 2026 date does not contradict the claim.
+4. A `Current-specific` claim explicitly asserts present timing, such as today, currently, latest, ongoing, or a named current year. Only then should an older event be treated as stale or misleading, and only if that timing makes the claim materially false.
+5. A `Historical` claim includes an explicit past date or period. Verify the event against evidence from that period and later authoritative corrections.
+6. Never confuse an article's publication date with the date the event occurred. Extract the event date from the article and use it to test the claim.
+7. Use recent articles for context, but do not prefer recency over direct relevance and historical accuracy.
+8. Only call a claim False when its core factual proposition is contradicted. If the event is true but the claim omits a date, keep it True and explain the date in `date_analysis`.
+9. Select ONLY the numbered articles above that are DIRECTLY relevant to verifying or refuting this claim. Exclude unrelated/off-topic articles.
+10. Return 1-indexed article numbers of relevant articles in `relevant_article_indices`.
 
 Return JSON strictly in this format:
 {{
@@ -103,6 +108,7 @@ Return JSON strictly in this format:
   "summary": "2 sentence explanation with explicit date context",
   "corrected_news": "actual verified facts including accurate dates",
   "reasoning": ["reason 1 (must analyze dates & source freshness)", "reason 2"],
+    "temporal_scope": "Historical|Current-specific|Undated factual",
   "date_analysis": "Clear assessment of news freshness, publication dates, and whether this claim matches current events or is recycled old news",
   "relevant_article_indices": [1, 2],
   "sources_used": ["source 1", "source 2"]

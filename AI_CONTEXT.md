@@ -117,3 +117,16 @@ FakeNews/
   - Added `frontend/src/services/analysisApi.js` API client.
 - Added root launcher scripts (`startAll.bat`, `startAll.sh`, `start_backend.bat`, `start_frontend.bat`).
 - Updated `README.md`, `backend/README.md`, `frontend/README.md`, `.gitignore`, and `AI_CONTEXT.md`.
+
+### 2026-09-28 - Intelligence Console UI, ML Learning Loop, and Deployment
+
+- Redesigned the frontend as a dark slate/indigo intelligence console with dense input, pipeline, verdict, probability, evidence, and source surfaces.
+- Connected `ModelPredictor` to `/api/analyze`: responses now include baseline-plus-learned `ml_prediction` probabilities and model learning counts.
+- Added weak learning from decisive Gemini verdicts using persisted similarity-weighted examples in `backend/history_logs/ml_feedback.jsonl`.
+- Added `VITE_API_URL` support for Vercel-to-Render API calls and configurable `CORS_ORIGINS` for production.
+- Added `render.yaml` and `docs/deployment.md` covering Render, Vercel, ML artifact availability, and ephemeral filesystem behavior.
+
+### 2026-09-28 - VeriScan AI Interface Refinement
+
+- Refined the frontend branding to `VeriScan AI` with the requested real-time verification hero, quick test samples, live three-agent execution timeline, and 12-column 7/5 analysis layout.
+- Moved scraped evidence outlets into a full-width three-column grid with publisher, headline, URL, and external-link affordance.

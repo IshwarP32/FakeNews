@@ -25,7 +25,8 @@ class QueryPlannerAgent:
         current_year = datetime.now().year
         prompt = (
             f'Generate {MAX_QUERIES_PER_CLAIM} targeted search queries for Indian news sources to verify this claim: "{claim[:QUERY_PLANNER_PROMPT_LEN]}". '
-            f'Ensure queries focus on finding the latest news reports (year {current_year}). '
+            f'Use the claim\'s own dates and wording to decide whether evidence should be historical or current. Do not force the year {current_year} into an undated claim. '
+            'For an undated factual claim, search for the original event and authoritative historical reporting as well as any recent context. '
             'Return ONLY a JSON array of strings, e.g. ["query1", "query2"]'
         )
         raw_response_text = ""
