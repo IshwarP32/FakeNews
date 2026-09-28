@@ -3,7 +3,6 @@ import { Activity, Zap } from 'lucide-react';
 import { useAnalysis } from '../context/AnalysisContext';
 import AnalysisForm from '../components/AnalysisForm';
 import ErrorMessage from '../components/ErrorMessage';
-import LoadingState from '../components/LoadingState';
 import AnalysisResult from '../components/AnalysisResult';
 import AgentTimeline from '../components/AgentTimeline';
 import SourceList from '../components/SourceList';
@@ -21,9 +20,10 @@ export default function Home() {
   return (
     <div className="app-shell">
       <main className="workspace">
-        <section className="intro-row"><div><p className="eyebrow">MULTI-AGENT INTELLIGENCE TOOL</p><h1>Verify news authenticity<br />in real-time.</h1><p className="intro-copy">Our multi-agent system formulates search queries, scrapes live news feeds (PTI, UNI, PIB), and cross-examines claims.</p></div><div className="sample-area"><p className="eyebrow">QUICK TEST SAMPLES</p><div className="sample-row">{quickSamples.map((sample) => <button key={sample.label} type="button" className="sample-button" onClick={() => applySample(sample)}><Zap size={12} />{sample.label}</button>)}</div></div></section>
+        <section className="intro-row"><div><p className="eyebrow">MULTI-AGENT INTELLIGENCE TOOL</p><h1>Verify news authenticity<br />in real-time.</h1><p className="intro-copy">Our multi-agent system formulates search queries, scrapes live news feeds (PTI, UNI, PIB), and cross-examines claims.</p></div></section>
+        <section className="samples-banner"><div><p className="eyebrow">QUICK TEST SAMPLES</p><span>Load a prepared claim into the verification pipeline.</span></div><div className="sample-row">{quickSamples.map((sample) => <button key={sample.label} type="button" className="sample-button" onClick={() => applySample(sample)}><Zap size={12} />{sample.label}</button>)}</div></section>
         <div className="analysis-grid">
-          <aside className="control-column"><div className="panel-heading"><span>01 / CLAIM INPUT</span><Activity size={15} /></div><AnalysisForm title={title} setTitle={setTitle} text={text} setText={setText} onSubmit={handleAnalyze} onClear={handleClear} isAnalyzing={isAnalyzing} hasContent={hasContent} /><ErrorMessage message={errorMsg} /><LoadingState isAnalyzing={isAnalyzing} /><div className="panel-heading result-heading"><span>02 / AI VERDICT</span><span className="live-label">{result ? 'RESULT READY' : 'AWAITING INPUT'}</span></div><AnalysisResult result={result} /></aside>
+          <aside className="control-column"><div className="panel-heading"><span>01 / CLAIM INPUT</span><Activity size={15} /></div><AnalysisForm title={title} setTitle={setTitle} text={text} setText={setText} onSubmit={handleAnalyze} onClear={handleClear} isAnalyzing={isAnalyzing} hasContent={hasContent} /><ErrorMessage message={errorMsg} /><div className="panel-heading result-heading"><span>02 / AI VERDICT</span><span className="live-label">{result ? 'RESULT READY' : 'AWAITING INPUT'}</span></div><AnalysisResult result={result} /></aside>
           <section className="result-column"><AgentTimeline isAnalyzing={isAnalyzing} activeStep={activeStep} result={result} /><div className="panel-heading ml-heading"><span>04 / ML PREDICTION</span><span className="live-label">LOCAL CLASSIFIER</span></div><MLPrediction result={result} /></section>
         </div>
         <section className="evidence-section"><div className="evidence-heading"><div><p className="eyebrow">05 / LIVE SOURCE GROUNDING</p><h2>Scraped News Evidence Outlets</h2></div>{result?.verdict?.grounding_sources?.length ? <span className="outlet-count">{result.verdict.grounding_sources.length} VERIFIED OUTLETS</span> : null}</div><SourceList sources={result?.verdict?.grounding_sources || []} sourceUrls={result?.verdict?.sources_used || []} /></section>
