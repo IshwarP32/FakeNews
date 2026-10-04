@@ -47,23 +47,41 @@ QUERY_PLANNER_PROMPT_LEN = 500
 # -----------------------------------------------------------------------
 # Model lists (real Gemini Developer API model names; validated at startup)
 # -----------------------------------------------------------------------
-# Planner: up to 3 models in priority order
+# Planner models in priority order (fast/lite first, then standard flash models)
+DEFAULT_PLANNER_MODELS = (
+    "gemini-2.5-flash-lite,"
+    "gemini-3.5-flash-lite,"
+    "gemini-3.1-flash-lite,"
+    "gemini-3.6-flash,"
+    "gemini-3.7-flash,"
+    "gemini-3.8-flash,"
+    "gemini-3.5-flash,"
+    "gemini-2.5-flash,"
+    "gemini-3-flash-preview,"
+    "gemini-2.0-flash"
+)
 PLANNER_MODELS: list[str] = [
     m.strip()
-    for m in os.getenv(
-        "GEMINI_PLANNER_MODELS",
-        "gemini-2.5-flash-lite,gemini-3.5-flash,gemini-2.5-flash",
-    ).split(",")
+    for m in os.getenv("GEMINI_PLANNER_MODELS", DEFAULT_PLANNER_MODELS).split(",")
     if m.strip()
 ]
 
-# Analyzer: up to 3 models in priority order
+# Analyzer models in priority order (advanced reasoning flash first, with extensive fallbacks)
+DEFAULT_ANALYZER_MODELS = (
+    "gemini-3.5-flash,"
+    "gemini-3.6-flash,"
+    "gemini-3.7-flash,"
+    "gemini-3.8-flash,"
+    "gemini-2.5-flash,"
+    "gemini-3.5-flash-lite,"
+    "gemini-2.5-flash-lite,"
+    "gemini-3.1-flash-lite,"
+    "gemini-3-flash-preview,"
+    "gemini-2.0-flash"
+)
 ANALYZER_MODELS: list[str] = [
     m.strip()
-    for m in os.getenv(
-        "GEMINI_ANALYZER_MODELS",
-        "gemini-3.5-flash,gemini-2.5-flash-lite,gemini-2.5-flash",
-    ).split(",")
+    for m in os.getenv("GEMINI_ANALYZER_MODELS", DEFAULT_ANALYZER_MODELS).split(",")
     if m.strip()
 ]
 
