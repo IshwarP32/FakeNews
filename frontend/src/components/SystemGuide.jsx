@@ -10,41 +10,132 @@ import {
   Layers, 
   Clock, 
   FileCheck,
-  ChevronDown,
-  ChevronUp,
-  Info
+  Filter,
+  SlidersHorizontal,
+  ExternalLink,
+  Info,
+  Server,
+  Sparkles
 } from 'lucide-react';
 
-const platforms = [
+const trustedPlatformCategories = [
   {
-    tier: 'Official Portals',
-    badge: 'official',
+    category: 'Official Government & Institutional Portals',
+    tier: 'official',
+    badge: 'Tier 1 (Highest Trust)',
     color: '#818cf8',
-    description: 'Government portals, ISRO, Supreme Court, official gazettes, and ministry releases (pib.gov.in, sci.gov.in).',
+    description: 'Direct primary sources with statutory or institutional authority.',
+    platforms: [
+      { name: 'Press Information Bureau (PIB)', domain: 'pib.gov.in' },
+      { name: 'ISRO (Space Research Org)', domain: 'isro.gov.in' },
+      { name: 'Reserve Bank of India (RBI)', domain: 'rbi.org.in' },
+      { name: 'Election Commission of India (ECI)', domain: 'eci.gov.in' },
+      { name: 'Supreme Court of India', domain: 'supremecourtofindia.nic.in' },
+    ],
   },
   {
-    tier: 'National Wires',
-    badge: 'wire',
+    category: 'National Wire Agencies',
+    tier: 'wire_national',
+    badge: 'Tier 2 (Primary Wires)',
     color: '#38bdf8',
-    description: 'Primary reporting wire agencies including Press Trust of India (PTI), UNI, and ANI.',
+    description: 'First-party national news reporting and ground correspondents.',
+    platforms: [
+      { name: 'Press Trust of India (PTI)', domain: 'pti.in' },
+      { name: 'United News of India (UNI)', domain: 'uniindia.com' },
+      { name: 'Asian News International (ANI)', domain: 'ani.in' },
+    ],
   },
   {
-    tier: 'Certified Fact-Checkers',
-    badge: 'factchecker',
+    category: 'Certified Fact-Checking Desks',
+    tier: 'factchecker',
+    badge: 'Tier 3 (Fact-Checkers)',
     color: '#34d399',
-    description: 'IFCN-certified fact-checking platforms including AltNews, BoomLive, and The Quint WebQoof.',
+    description: 'IFCN-certified fact-checking platforms specialized in viral debunks.',
+    platforms: [
+      { name: 'AltNews', domain: 'altnews.in' },
+      { name: 'BOOM Live', domain: 'boomlive.in' },
+      { name: 'Factly', domain: 'factly.in' },
+      { name: 'The Quint WebQoof', domain: 'thequint.com' },
+    ],
   },
   {
-    tier: 'Major National Dailies',
-    badge: 'mainstream',
+    category: 'Leading National Dailies & Publishers',
+    tier: 'mainstream',
+    badge: 'Tier 4 (Major Media)',
     color: '#fbbf24',
-    description: 'Leading national publications including The Hindu, Indian Express, NDTV, Times of India, and Hindustan Times.',
+    description: 'Reputable national editorial newsrooms with established bylines.',
+    platforms: [
+      { name: 'The Hindu', domain: 'thehindu.com' },
+      { name: 'The Indian Express', domain: 'indianexpress.com' },
+      { name: 'NDTV News', domain: 'ndtv.com' },
+      { name: 'Hindustan Times', domain: 'hindustantimes.com' },
+      { name: 'Times of India', domain: 'timesofindia.indiatimes.com' },
+      { name: 'ThePrint', domain: 'theprint.in' },
+      { name: 'Firstpost', domain: 'firstpost.com' },
+      { name: 'The Week', domain: 'theweek.in' },
+    ],
   },
   {
-    tier: 'Reference Archives',
-    badge: 'reference',
+    category: 'Reference & Historical Archives',
+    tier: 'reference',
+    badge: 'Tier 5 (Encyclopedic)',
     color: '#a78bfa',
-    description: 'Wikipedia and institutional encyclopedic archives for timeless historical context.',
+    description: 'Encyclopedic reference databases for timeless historical events.',
+    platforms: [
+      { name: 'Wikipedia API', domain: 'wikipedia.org' },
+      { name: 'Institutional Archives', domain: 'archive.org' },
+    ],
+  },
+];
+
+const scrapeMetrics = [
+  {
+    label: 'Raw Scrape Volume',
+    value: 'Up to 100 / query',
+    desc: 'Each RSS query feed returns up to 100 recent & historical items (retrieving 100-300+ items per claim).',
+  },
+  {
+    label: 'Dual-Pool Quota',
+    value: '≥ 1/3 per pool',
+    desc: 'At least 5 slots reserved for historical archives and 5 for recent news, preventing recency bias.',
+  },
+  {
+    label: 'Ranked Candidates',
+    value: 'Top 15 Articles',
+    desc: 'Scored via concept coverage & source credibility priors; only the top 15 reach Agent 3.',
+  },
+  {
+    label: 'Quote Verification',
+    value: '100% Verbatim',
+    desc: 'Every supporting quote must match character-for-character, or it is automatically discarded.',
+  },
+];
+
+const activeFilters = [
+  {
+    name: '1. Date-Window Operators',
+    rule: 'after:YYYY-MM-DD & before:YYYY-MM-DD',
+    detail: 'Explicit years or dates map directly to bounded search windows, ensuring historical claims pull authentic records from that era.',
+  },
+  {
+    name: '2. Concept Group Gate',
+    rule: 'must_have_terms concepts',
+    detail: 'Articles must match all required core entity groups (e.g. institution name + event concept). Articles matching 0 groups are immediately dropped.',
+  },
+  {
+    name: '3. Near-Miss Confusion Penalty',
+    rule: 'likely_confusions penalty',
+    detail: 'Articles discussing look-alike competitions (e.g. Inter IIT Tech Meet vs Sports Meet) are penalized to prevent mistaken attribution.',
+  },
+  {
+    name: '4. Wire Syndication Deduplication',
+    rule: 'Clustering identical wire copy',
+    detail: 'If the same PTI or ANI dispatch appears in 5 newspapers, it is collapsed into 1 independent source cluster to prevent artificial consensus.',
+  },
+  {
+    name: '5. SSRF-Protected Body Extraction',
+    rule: 'Full-text extraction with snippet fallback',
+    detail: 'Attempts deep text extraction around must-have terms. For paywalled sites, safely falls back to RSS snippets and caps confidence.',
   },
 ];
 
@@ -120,7 +211,7 @@ export default function SystemGuide() {
           <p className="eyebrow">06 / VERIFICATION METHODOLOGY & SYSTEM GUIDE</p>
           <h2>How Claims Are Verified & How To Read Your Results</h2>
           <p className="guide-subtitle">
-            A transparent overview of our multi-platform sourcing, verdict classifications, and code-enforced anti-hallucination guarantees.
+            A transparent overview of our multi-platform sourcing, scraping volume, filtering rules, and code-enforced anti-hallucination guarantees.
           </p>
         </div>
       </div>
@@ -132,7 +223,7 @@ export default function SystemGuide() {
           onClick={() => setActiveTab('platforms')}
         >
           <Database size={14} />
-          <span>Multi-Platform Sourcing</span>
+          <span>Platforms, Volume & Filters</span>
         </button>
         <button
           type="button"
@@ -155,20 +246,66 @@ export default function SystemGuide() {
       <div className="guide-content-panel">
         {activeTab === 'platforms' && (
           <div className="guide-tab-pane">
-            <div className="pane-intro">
-              <Info size={16} />
-              <p>
-                We do not rely on a single publisher or wire. Our multi-agent pipeline scrapes and cross-examines evidence across hundreds of verified portals, categorized into strict trust tiers:
-              </p>
+            {/* Scraping Volume & Quotas Cards */}
+            <div className="guide-subheading">
+              <Server size={15} />
+              <h3>Scraping Volume & Retrieval Quotas</h3>
             </div>
-            <div className="platforms-grid">
-              {platforms.map((p) => (
-                <div key={p.tier} className="platform-card">
-                  <div className="platform-card-header">
-                    <strong>{p.tier}</strong>
-                    <span className="tier-tag">{p.badge}</span>
+            <div className="metrics-strip">
+              {scrapeMetrics.map((m) => (
+                <div key={m.label} className="metric-box">
+                  <span className="metric-value">{m.value}</span>
+                  <strong className="metric-label">{m.label}</strong>
+                  <p className="metric-desc">{m.desc}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Ingestion & Filtering Rules */}
+            <div className="guide-subheading" style={{ marginTop: '28px' }}>
+              <Filter size={15} />
+              <h3>The 5-Stage Verification Filters</h3>
+            </div>
+            <div className="filters-grid">
+              {activeFilters.map((f) => (
+                <div key={f.name} className="filter-card">
+                  <div className="filter-card-top">
+                    <strong>{f.name}</strong>
+                    <code>{f.rule}</code>
                   </div>
-                  <p>{p.description}</p>
+                  <p>{f.detail}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Trusted Platforms List by Tier */}
+            <div className="guide-subheading" style={{ marginTop: '28px' }}>
+              <Sparkles size={15} />
+              <h3>Catalog of Trusted Multi-Platform Sources</h3>
+            </div>
+            <p className="pane-note">
+              Rather than searching only wire snippets, VeriScan AI monitors a structured hierarchy of hundreds of Indian and global news organizations categorized into five credibility tiers:
+            </p>
+            <div className="trusted-tiers-list">
+              {trustedPlatformCategories.map((cat) => (
+                <div key={cat.category} className="tier-group-card">
+                  <div className="tier-group-header">
+                    <div>
+                      <h4>{cat.category}</h4>
+                      <p>{cat.description}</p>
+                    </div>
+                    <span className="tier-badge" style={{ borderColor: cat.color, color: cat.color }}>
+                      {cat.badge}
+                    </span>
+                  </div>
+                  <div className="platform-pills-row">
+                    {cat.platforms.map((p) => (
+                      <span key={p.domain} className="platform-pill">
+                        <strong>{p.name}</strong>
+                        <small>{p.domain}</small>
+                      </span>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
