@@ -62,18 +62,31 @@ export function AnalysisProvider({ children }) {
       setResult(data);
 
       if (data?.error) {
-        toast.error(data.error, { toastId: 'api-error', autoClose: 6000 });
+        const errorObj = typeof data.error === 'object' ? data.error : { message: data.error };
+        const msg = errorObj.message || errorObj.guidance || 'Verification encountered an error.';
+        setErrorMsg(msg);
+        toast.error(`${errorObj.reason_code ? `[${errorObj.reason_code.toUpperCase()}] ` : ''}${msg}`, {
+          toastId: 'pipeline-error',
+          autoClose: 8000,
+        });
       } else if (data?.verdict?.flags?.includes('llm_unavailable')) {
         toast.error('AI models are currently unavailable due to API limits.', { toastId: 'quota-alert', autoClose: 6000 });
-      } else if (data?.verdict?.flags?.includes('retrieval_incomplete')) {
-        toast.info('Notice: Some news source queries timed out; verified with available articles.', { toastId: 'partial-retrieval' });
+      } else if (data?.verdict?.flags?.includes('retrieval_incomplete') || data?.coverage?.retrieval_incomplete) {
+        toast.warn('Notice: Some news source queries timed out; verified with available articles.', { toastId: 'partial-retrieval', autoClose: 5000 });
       } else {
         toast.success('Verification analysis complete!', { toastId: 'analysis-success', autoClose: 3500 });
       }
     } catch (err) {
       const msg = err.message || 'Unable to connect to server.';
       setErrorMsg(msg);
-      toast.error(msg, { toastId: 'analysis-error', autoClose: 6000 });
+      if (err.payload?.result) {
+        setResult(err.payload.result);
+      } else if (err.errorInfo) {
+        setResult({
+          error: typeof err.errorInfo === 'object' ? err.errorInfo : { message: msg, reason_code: 'ANALYSIS_FAILED' }
+        });
+      }
+      toast.error(msg, { toastId: 'analysis-error', autoClose: 8000 });
     } finally {
       setIsAnalyzing(false);
     }

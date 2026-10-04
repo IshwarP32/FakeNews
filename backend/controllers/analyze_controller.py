@@ -63,10 +63,13 @@ def stream_claim_analysis(title: str, text: str) -> Iterator[str]:
                 "claim": claim,
                 **analysis,
             }
-            report(emit, "analysis_completed", "Verification complete.", result=result)
+            if analysis.get("error"):
+                report(emit, "analysis_failed", analysis["error"].get("message", "Analysis failed."), error=analysis["error"], result=result)
+            else:
+                report(emit, "analysis_completed", "Verification complete.", result=result)
         except Exception as exc:
             logger.exception("analysis_failed")
-            report(emit, "analysis_failed", "Analysis failed.", error=str(exc))
+            report(emit, "analysis_failed", "Analysis failed.", error={"message": str(exc), "reason_code": "unhandled_exception"})
 
     Thread(target=worker, daemon=True).start()
 

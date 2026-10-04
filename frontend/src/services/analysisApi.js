@@ -49,7 +49,14 @@ export async function analyzeClaimStreamApi({ title, text, onProgress }) {
       const payload = JSON.parse(dataLine.slice(6));
       onProgress?.(payload);
       if (payload.event === 'analysis_completed') completedResult = payload.result;
-      if (payload.event === 'analysis_failed') throw new Error(payload.error || 'Analysis failed.');
+      if (payload.event === 'analysis_failed') {
+        const errorInfo = payload.error || payload.message || 'Analysis failed.';
+        const errMessage = typeof errorInfo === 'object' ? (errorInfo.message || errorInfo.guidance || 'Analysis failed.') : errorInfo;
+        const err = new Error(errMessage);
+        err.payload = payload;
+        err.errorInfo = errorInfo;
+        throw err;
+      }
     }
     if (done) break;
   }

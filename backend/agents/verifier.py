@@ -193,15 +193,12 @@ class GeminiVerifier:
                 err_msg = str(exc)
                 logger.error("Agent 3 failed: %s", err_msg)
                 if "llm_config_error" in err_msg:
-                    return self._error_result("llm_config_error", err_msg)
+                    return self._error_result("llm_config_error", err_msg, failed_agent="Agent 3 (Evidence Analyzer)")
                 elif "llm_quota_exhausted" in err_msg:
-                    return self._error_result("llm_quota_exhausted", err_msg)
+                    return self._error_result("llm_quota_exhausted", err_msg, failed_agent="Agent 3 (Evidence Analyzer)")
                 elif "wall-clock budget" in err_msg:
-                    return self._error_result("llm_timeout", "Verification exceeded time budget. Please retry.")
-                # Degrade: use proposition-derived result
-                result = self.analyzer.build_zero_article_result(claim_analysis, scraper_log)
-                result["limitations"] = f"Evidence analysis failed ({err_msg[:200]}). Retrieval succeeded but analysis is unavailable."
-                model_used = "none (analyzer failed)"
+                    return self._error_result("llm_timeout", "Verification exceeded time budget. Please retry.", failed_agent="Agent 3 (Evidence Analyzer)")
+                return self._error_result("llm_unavailable", f"Evidence analysis failed: {err_msg[:200]}", failed_agent="Agent 3 (Evidence Analyzer)")
 
         # Validate and ground the result
         result = self.analyzer.validate_grounding(result, articles)
@@ -288,6 +285,20 @@ class GeminiVerifier:
             "retrieval_incomplete": scraper_log.get("retrieval_incomplete", False),
         }
 
+        # Check for pipeline errors in retrieval
+        pipeline_error = None
+        if not articles and scraper_log.get("retrieval_incomplete", False):
+            failed_count = sum(1 for q in query_logs if q.get("status") == "failed")
+            pipeline_error = {
+                "reason_code": "retrieval_failed",
+                "message": (
+                    f"News retrieval error: {failed_count} of {len(query_logs)} search queries encountered errors "
+                    "(connection/timeout). No articles could be fetched."
+                ),
+                "guidance": "Please verify internet connection and retry. News endpoints may be temporarily unreachable.",
+                "failed_agent": "Agent 2 (News Scraper)",
+            }
+
         # -----------------------------------------------------------------
         # Telemetry log
         # -----------------------------------------------------------------
@@ -323,20 +334,22 @@ class GeminiVerifier:
         )
         return {
             "schema_version": "2.0",
+            "error": pipeline_error,
             "verdict": result,
             "evidence_articles": evidence_articles,
             "context_articles": context_articles,
             "coverage": coverage,
         }
 
-    def _error_result(self, reason_code: str, message: str) -> Dict[str, Any]:
+    def _error_result(self, reason_code: str, message: str, failed_agent: str = "Agent 1 (Query Planner)") -> Dict[str, Any]:
         """Return a structured error state (never an invented verdict)."""
-        logger.error("Pipeline error: %s - %s", reason_code, message)
+        logger.error("Pipeline error in %s: %s - %s", failed_agent, reason_code, message)
         guidance = {
             "llm_config_error": "A configuration error occurred. Please contact support.",
-            "llm_quota_exhausted": "API quota exceeded. Please retry in a few minutes.",
-            "llm_unavailable": "The AI service is temporarily unavailable. Please retry.",
+            "llm_quota_exhausted": "API quota exceeded across all configured models. Please retry in a few minutes or add fallback keys.",
+            "llm_unavailable": "The AI service is temporarily unavailable across all models. Please retry.",
             "llm_timeout": "Analysis exceeded the time budget. Please retry.",
+            "retrieval_failed": "Network/retrieval error: Unable to connect to news sources. Please verify internet connectivity.",
         }.get(reason_code, "An unexpected error occurred. Please retry.")
         return {
             "schema_version": "2.0",
@@ -344,6 +357,7 @@ class GeminiVerifier:
                 "reason_code": reason_code,
                 "message": message,
                 "guidance": guidance,
+                "failed_agent": failed_agent,
             },
             "verdict": None,
             "evidence_articles": [],

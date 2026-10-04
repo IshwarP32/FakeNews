@@ -485,3 +485,47 @@ footer { display: flex; justify-content: space-between; padding: 17px 0; border-
   line-height: 1.55;
 }
 
+/* Pipeline Error & Warning States */
+.error-state-panel {
+  border-color: #f43f5e99 !important;
+  background: linear-gradient(135deg, rgba(244, 63, 94, 0.12), var(--surface) 60%) !important;
+}
+.error-chip {
+  border-color: #f43f5e88 !important;
+  background: rgba(244, 63, 94, 0.15) !important;
+  color: #fda4af !important;
+  font-weight: 600;
+}
+.error-block {
+  padding: 12px 14px;
+  border-left: 3px solid var(--rose);
+  background: rgba(244, 63, 94, 0.08);
+  border-radius: 0 6px 6px 0;
+}
+.warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0 6px;
+  padding: 10px 14px;
+  border: 1px solid #f59e0b66;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.timeline-step.failed .timeline-marker {
+  border-color: var(--rose) !important;
+  color: var(--rose) !important;
+  box-shadow: 0 0 0 3px rgba(244, 63, 94, 0.25) !important;
+}
+.timeline-step.failed strong {
+  color: #fda4af !important;
+}
+.pulse-dot.pipeline-failed {
+  background: var(--rose) !important;
+  box-shadow: 0 0 0 4px rgba(244, 63, 94, 0.3) !important;
+  animation: none;
+}
+
