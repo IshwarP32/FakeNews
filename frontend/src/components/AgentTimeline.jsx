@@ -2,9 +2,9 @@ import React from 'react';
 import { Check, Circle, LoaderCircle } from 'lucide-react';
 
 const steps = [
-  ['Agent 1', 'Query Planner', 'Generating search queries...'],
-  ['Agent 2', 'News Scraper', 'Scraping RSS news feeds for PTI / UNI...'],
-  ['Agent 3', 'Evidence Analyzer', 'Evaluating claim against evidence...'],
+  ['Agent 1', 'Query Planner', 'Decomposing claim propositions & planning search queries...'],
+  ['Agent 2', 'News Scraper', 'Retrieving date-bounded archives across multiple verified platforms...'],
+  ['Agent 3', 'Evidence Analyzer', 'Cross-examining claim against collected evidence quotes...'],
 ];
 
 export default function AgentTimeline({ isAnalyzing, activeStep, result }) {
