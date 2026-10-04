@@ -431,15 +431,16 @@ class NewsScraperAgent:
 
             # Integrate Wikipedia fallback candidates
             try:
-                wiki_items, wiki_log = wiki_future.result(timeout=min(6, RSS_REQUEST_TIMEOUT + 2))
+                wiki_items, wiki_log = wiki_future.result(timeout=15)
                 query_logs.append(wiki_log)
+                logger.info("Wikipedia fallback retrieved %d reference candidates (status=%s)", len(wiki_items), wiki_log.get("status"))
                 for item in wiki_items:
                     canonical_key = re.sub(r"\W+", " ", item.get("title", "").lower()).strip()
                     if canonical_key in candidates:
                         continue
                     candidates[canonical_key] = item
             except Exception as exc:
-                logger.debug("Wikipedia fallback processing error: %s", exc)
+                logger.warning("Wikipedia fallback processing error: %s", exc)
 
         # Pool separation and quota
         grouped: Dict[str, List[Dict[str, Any]]] = {"recent": [], "historical": []}
