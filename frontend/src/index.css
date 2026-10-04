@@ -16,6 +16,9 @@
   --rose: #f43f5e;
   --amber: #f59e0b;
 }
+.coverage-line { margin: 12px 0 0; color: var(--muted); font: 10px ui-monospace, monospace; text-transform: uppercase; }
+.context-details { margin-top: 22px; }
+.context-details summary { margin-bottom: 12px; color: var(--muted); cursor: pointer; font: 10px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: var(--bg); }
 button, input, textarea { font: inherit; }
@@ -77,14 +80,9 @@ footer { display: flex; justify-content: space-between; padding: 17px 0; border-
 @keyframes spin { to { transform: rotate(360deg); } } @keyframes ping { 50% { box-shadow: 0 0 0 7px #10b98108; } } @keyframes progress { 0%, 100% { transform: translateY(-20px); } 50% { transform: translateY(50px); } }
 @media (max-width: 800px) { .topbar, .workspace, footer { width: min(100% - 28px, 600px); }.workspace { padding-top: 35px; }.intro-row { display: block; }.samples-banner { align-items: start; flex-direction: column; }.sample-row { justify-content: flex-start; }.analysis-grid { display: block; }.input-panel, .timeline-card { height: auto; }.timeline-card { margin-top: 0; }.result-column { margin-top: 28px; }.evidence-heading { align-items: start; flex-direction: column; }.sources-grid { grid-template-columns: 1fr; }.verdict-header { align-items: start; flex-direction: column; }.status-chip { align-self: start; }footer { display: block; line-height: 1.9; }.footer span { display: block; } }
 @media (max-width: 480px) { .system-state { padding: 7px; font-size: 0; }.system-state i { margin: 0; }.intro-row h1 { font-size: 29px; }.input-panel, .timeline-card, .result-panel { padding: 17px; }.action-row { flex-direction: column; }.ghost-button { min-height: 38px; }.probability-top { align-items: start; flex-direction: column; gap: 10px; }.probability-meta { align-items: start; } }
-.ml-heading { margin-top: 20px; }
-.ml-panel { min-height: 134px; padding: 17px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-.ml-panel-top { display: flex; align-items: end; justify-content: space-between; gap: 12px; }
-.ml-panel-top .eyebrow { margin: 0 0 4px; color: var(--muted); }
-.ml-panel-top strong { font-size: 28px; letter-spacing: -.04em; }
-.ml-panel .probability-meta { display: flex; flex-direction: column; align-items: end; gap: 5px; color: var(--rose); font-size: 10px; }
-.ml-panel .probability-meta small { color: var(--dim); font-size: 8px; }
-.ml-panel .probability-bar { margin-top: 13px; }
-.ml-empty { display: grid; min-height: 134px; place-items: center; color: var(--dim); text-align: center; }
-.ml-empty p { margin: 0; font: 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; }
 .pipeline-complete { background: var(--green); box-shadow: 0 0 0 4px #10b98122; animation: none; }
+.sources-block h3 { margin: 0 0 12px; color: var(--muted); font: 10px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.context-heading { margin-top: 24px !important; }
+.source-title span { color: var(--dim); }
+.source-quote { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+.empty-sources { color: var(--dim); font: 10px ui-monospace, monospace; text-transform: uppercase; }

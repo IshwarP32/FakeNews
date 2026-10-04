@@ -6,7 +6,6 @@ import ErrorMessage from '../components/ErrorMessage';
 import AnalysisResult from '../components/AnalysisResult';
 import AgentTimeline from '../components/AgentTimeline';
 import SourceList from '../components/SourceList';
-import MLPrediction from '../components/MLPrediction';
 
 const quickSamples = [
   { label: 'IIT Bombay Caste Case (Real)', title: 'IIT Bombay caste discrimination case reported by official sources', text: '' },
@@ -24,9 +23,9 @@ export default function Home() {
         <section className="samples-banner"><div><p className="eyebrow">QUICK TEST SAMPLES</p><span>Load a prepared claim into the verification pipeline.</span></div><div className="sample-row">{quickSamples.map((sample) => <button key={sample.label} type="button" className="sample-button" onClick={() => applySample(sample)}><Zap size={12} />{sample.label}</button>)}</div></section>
         <div className="analysis-grid">
           <aside className="control-column"><div className="panel-heading"><span>01 / CLAIM INPUT</span><Activity size={15} /></div><AnalysisForm title={title} setTitle={setTitle} text={text} setText={setText} onSubmit={handleAnalyze} onClear={handleClear} isAnalyzing={isAnalyzing} hasContent={hasContent} /><ErrorMessage message={errorMsg} /><div className="panel-heading result-heading"><span>02 / AI VERDICT</span><span className="live-label">{result ? 'RESULT READY' : 'AWAITING INPUT'}</span></div><AnalysisResult result={result} /></aside>
-          <section className="result-column"><AgentTimeline isAnalyzing={isAnalyzing} activeStep={activeStep} result={result} /><div className="panel-heading ml-heading"><span>04 / ML PREDICTION</span><span className="live-label">LOCAL CLASSIFIER</span></div><MLPrediction result={result} /></section>
+          <section className="result-column"><AgentTimeline isAnalyzing={isAnalyzing} activeStep={activeStep} result={result} /></section>
         </div>
-        <section className="evidence-section"><div className="evidence-heading"><div><p className="eyebrow">05 / LIVE SOURCE GROUNDING</p><h2>Scraped News Evidence Outlets</h2></div>{result?.verdict?.grounding_sources?.length ? <span className="outlet-count">{result.verdict.grounding_sources.length} VERIFIED OUTLETS</span> : null}</div><SourceList sources={result?.verdict?.grounding_sources || []} sourceUrls={result?.verdict?.sources_used || []} /></section>
+        <section className="evidence-section"><div className="evidence-heading"><div><p className="eyebrow">05 / LIVE SOURCE GROUNDING</p><h2>Scraped News Evidence Outlets</h2></div>{result?.evidence_articles?.length ? <span className="outlet-count">{result.evidence_articles.length} EVIDENCE ARTICLES</span> : null}</div><SourceList evidenceSources={result?.evidence_articles || []} contextSources={result?.context_articles || []} /></section>
       </main>
       <footer><span>TRUTH//SIGNAL</span><span>AI output is probabilistic. Inspect the cited evidence.</span></footer>
     </div>
