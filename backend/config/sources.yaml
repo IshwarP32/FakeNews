@@ -1,0 +1,23 @@
+official:
+  - pib.gov.in
+  - isro.gov.in
+  - rbi.org.in
+  - eci.gov.in
+  - supremecourtofindia.nic.in
+wire_national:
+  - pti.in
+  - ani.in
+  - thehindu.com
+  - indianexpress.com
+  - timesofindia.indiatimes.com
+  - hindustantimes.com
+  - ndtv.com
+factchecker:
+  - altnews.in
+  - boomlive.in
+  - factly.in
+other_known:
+  - theprint.in
+  - firstpost.com
+  - mid-day.com
+  - theweek.in

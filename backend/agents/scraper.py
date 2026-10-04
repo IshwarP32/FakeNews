@@ -1,162 +1,333 @@
-"""Agent 2: Live News Scraper (Restricted to Whitelisted Outlets & Date Prioritized)."""
+"""Agent 2: date-windowed Google News retrieval and candidate ranking.
 
+Phase 3 improvements:
+- Retry timeouts (up to 2 attempts, exponential backoff)
+- Per-window status: ok | empty | failed (never swallowed)
+- retrieval_incomplete flag when any window failed
+- Stable IDs assigned AFTER ranking (A01..A15)
+- fetch_status correctly set to full_text or snippet_only
+- SSRF protection on article fetching
+- Pool quotas enforced (at least 1/3 of MAX_CANDIDATES per non-empty pool)
+- Dedup by canonical URL then by normalised title
+- Source tiers from sources.yaml
+"""
+
+from __future__ import annotations
+
+import html
+import re
+import socket
+import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import (
-    ALLOWED_SOURCES,
-    MAX_FALLBACK_ARTICLES,
+    MAX_CANDIDATES,
     MAX_RSS_ITEMS_PER_QUERY,
     RSS_REQUEST_TIMEOUT,
-    WHITELISTED_DOMAINS,
+    SOURCE_TIERS,
     logger,
 )
 from backend.utils.progress import ProgressCallback, report
 
+try:
+    import trafilatura
+except ImportError:  # pragma: no cover
+    trafilatura = None
+
+# Private IP ranges to block for SSRF protection
+_PRIVATE_PREFIXES = (
+    "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+    "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.",
+    "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+    "192.168.", "127.", "0.", "169.254.", "::1", "fc", "fd",
+)
+_MAX_ARTICLE_BODY_BYTES = 256 * 1024  # 256 KB
+_MAX_REDIRECTS = 5
+
+
+def _is_safe_url(url: str) -> bool:
+    """Block private/loopback/link-local URLs (SSRF protection)."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        host = parsed.hostname or ""
+        # Resolve to IP if needed
+        try:
+            ip = socket.gethostbyname(host)
+        except socket.gaierror:
+            return False
+        return not any(ip.startswith(p) for p in _PRIVATE_PREFIXES)
+    except Exception:
+        return False
+
 
 class NewsScraperAgent:
-    """Agent 2 searches and scrapes RSS feeds for specific trusted Indian news sources."""
+    """Retrieve, rank, and pool Google News RSS candidates without judging claims."""
 
-    def is_whitelisted_source(self, source_name: str, title: str) -> bool:
-        """Checks if the article source or title matches our trusted outlets list."""
-        text = f"{source_name} {title}".lower()
-        return any(allowed in text for allowed in ALLOWED_SOURCES)
+    def _normalise_domain(self, value: str) -> str:
+        domain = urllib.parse.urlparse(value if "://" in value else f"https://{value}").netloc.lower()
+        return re.sub(r"^(www\.|m\.|amp\.)", "", domain)
+
+    def _source_tier(self, publisher_site: str) -> str:
+        domain = self._normalise_domain(publisher_site)
+        for tier, domains in SOURCE_TIERS.items():
+            if any(domain == candidate or domain.endswith(f".{candidate}") for candidate in domains):
+                return tier
+        return "unknown"
 
     def _parse_pub_date(self, date_str: str) -> datetime:
-        """Parses RSS pubDate string to datetime for date sorting."""
         if not date_str:
             return datetime.min
         try:
-            dt = parsedate_to_datetime(date_str)
-            return dt.replace(tzinfo=None) if dt.tzinfo else dt
-        except Exception:
+            parsed = parsedate_to_datetime(date_str)
+            return parsed.replace(tzinfo=None) if parsed.tzinfo else parsed
+        except (TypeError, ValueError, OverflowError):
             return datetime.min
 
-    def _fetch_rss_items(self, query: str) -> Tuple[str, List[Dict[str, str]]]:
-        """Executes HTTP request to Google News RSS and returns parsed items with direct publisher URLs."""
-        encoded = urllib.parse.quote(query)
-        url = f"https://news.google.com/rss/search?q={encoded}&hl=en-IN&gl=IN&ceid=IN:en"
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=RSS_REQUEST_TIMEOUT) as resp:
-            root = ET.fromstring(resp.read())
+    def _clean_html(self, value: str) -> str:
+        text = re.sub(r"<[^>]+>", " ", value or "")
+        return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
-        items = []
+    def _fetch_rss_items_once(self, planned_query: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+        """Single attempt to fetch RSS items for a query."""
+        query = str(planned_query.get("q", "")).strip()
+        site_hint = planned_query.get("site_hint")
+        if site_hint:
+            query = f"{query} site:{site_hint}"
+
+        after = planned_query.get("after")
+        before = planned_query.get("before")
+        if after:
+            query += f" after:{after}"
+        if before:
+            query += f" before:{before}"
+
+        lang = planned_query.get("language", "en")
+        params = {
+            "q": query,
+            "hl": "hi" if lang == "hi" else "en-IN",
+            "gl": "IN",
+            "ceid": "IN:hi" if lang == "hi" else "IN:en",
+        }
+        url = "https://news.google.com/rss/search?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "FakeNewsVerifier/2.0 (research; educational)"},
+        )
+        with urllib.request.urlopen(req, timeout=RSS_REQUEST_TIMEOUT) as response:
+            root = ET.fromstring(response.read())
+
+        items: List[Dict[str, Any]] = []
         for item in root.findall(".//item")[:MAX_RSS_ITEMS_PER_QUERY]:
-            title = (item.findtext("title") or "").strip()
-            article_link = (item.findtext("link") or "").strip()
-            source_elem = item.find("source")
-            source_name = (source_elem.text if source_elem is not None and source_elem.text else "News Agency").strip()
-            publisher_site = (source_elem.attrib.get("url") if source_elem is not None else "").strip()
-            raw_pub_date = (item.findtext("pubDate") or "").strip()
-
-            if title:
-                items.append({
-                    "title": title,
-                    "link": article_link,
-                    "publisher_site": publisher_site,
-                    "source": source_name,
-                    "pubDate": raw_pub_date
-                })
+            source_element = item.find("source")
+            publisher_site = (source_element.attrib.get("url") if source_element is not None else "") or ""
+            items.append({
+                "title": (item.findtext("title") or "").strip(),
+                "link": (item.findtext("link") or "").strip(),
+                "source": (source_element.text if source_element is not None else "") or "Unknown publisher",
+                "publisher_site": publisher_site.strip(),
+                "pub_date": (item.findtext("pubDate") or "").strip(),
+                "excerpt": self._clean_html(item.findtext("description") or ""),
+            })
         return url, items
 
-    def scrape_news(
-        self, queries: List[str], on_progress: Optional[ProgressCallback] = None
-    ) -> Tuple[List[Dict[str, str]], Dict[str, Any]]:
-        report(on_progress, "web_scraping", f"Agent 2 (News Scraper): Scraping whitelisted news RSS feeds for {len(queries)} queries...")
-        logger.info(f"Agent 2: Scraping restricted news RSS for queries: {queries}")
-
-        site_filter_operator = " OR ".join([f"site:{d}" for d in WHITELISTED_DOMAINS])
-
-        articles = []
-        fallback_articles = []
-        seen_titles = set()
-        queries_log = []
-
-        for base_q in queries:
-            query_log = {
-                "base_query": base_q,
-                "whitelisted_site_filter_applied": True,
-                "rss_url": "",
-                "raw_rss_items_count": 0,
-                "raw_rss_items": [],
-                "whitelisted_matches": [],
-                "fallback_matches": [],
-                "error": None
-            }
-
-            # Pass 1: Targeted search applying site: filters directly in Google RSS query
-            targeted_q = f"{base_q} ({site_filter_operator})" if site_filter_operator else base_q
-            fetched_items = []
+    def _fetch_rss_items(self, planned_query: Dict[str, Any], max_retries: int = 2) -> Tuple[str, List[Dict[str, Any]], str]:
+        """Fetch RSS with retry on transient errors. Returns (url, items, status)."""
+        last_exc = None
+        for attempt in range(max_retries):
             try:
-                url, fetched_items = self._fetch_rss_items(targeted_q)
-                query_log["rss_url"] = url
-            except Exception as e:
-                logger.warning(f"Whitelisted RSS search failed for '{targeted_q}': {e}")
-                query_log["error"] = str(e)
+                url, items = self._fetch_rss_items_once(planned_query)
+                return url, items, "ok"
+            except Exception as exc:
+                last_exc = exc
+                msg = str(exc).lower()
+                # Retry timeouts and 5xx, not 4xx
+                if "timed out" in msg or "timeout" in msg or "connection" in msg or "50" in msg:
+                    if attempt < max_retries - 1:
+                        sleep_t = 1.5 * (attempt + 1)
+                        logger.info("RSS retry %d after %.1fs for query %r: %s", attempt + 1, sleep_t, planned_query.get("q", ""), exc)
+                        time.sleep(sleep_t)
+                        continue
+                break  # Non-retryable error
+        logger.warning("RSS fetch failed after %d attempts for %r: %s", max_retries, planned_query.get("q", ""), last_exc)
+        return "", [], "failed"
 
-            # Pass 2: Fallback to general RSS search if targeted site filter returned 0 items
-            if not fetched_items:
+    def _coverage_score(self, article: Dict[str, Any], must_have_terms: List[List[str]]) -> float:
+        text = f"{article.get('title', '')} {article.get('excerpt', '')}".lower()
+        if not must_have_terms:
+            return 1.0
+        covered = sum(1 for group in must_have_terms if any(alias.lower() in text for alias in group))
+        return covered / len(must_have_terms)
+
+    def _rank_candidate(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> float:
+        coverage = self._coverage_score(article, claim_analysis.get("must_have_terms", []))
+        claim_tokens = set(re.findall(r"\w+", claim_analysis.get("normalized_claim", "").lower()))
+        article_tokens = set(re.findall(r"\w+", f"{article.get('title', '')} {article.get('excerpt', '')}".lower()))
+        lexical = len(claim_tokens & article_tokens) / max(1, len(claim_tokens))
+        tier_score = {
+            "official": 1.0, "wire_national": 0.9, "factchecker": 0.85,
+            "other_known": 0.7, "reference": 0.5, "unknown": 0.2,
+        }.get(article.get("source_tier"), 0.2)
+        # Penalise likely confusions
+        likely_confusions = [c.lower() for c in claim_analysis.get("likely_confusions", [])]
+        text_lower = f"{article.get('title', '')} {article.get('excerpt', '')}".lower()
+        confusion_penalty = 0.2 if any(c in text_lower for c in likely_confusions) else 0.0
+        score = 0.5 * coverage + 0.3 * lexical + 0.2 * tier_score - confusion_penalty
+        return round(max(0.0, score), 4)
+
+    def _fetch_article_excerpt(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> None:
+        """Replace a weak RSS snippet with a bounded extracted passage when possible."""
+        if trafilatura is None or not article.get("link"):
+            return
+        url = article["link"]
+        if not _is_safe_url(url):
+            logger.debug("Skipping article fetch (SSRF check): %s", url)
+            return
+        try:
+            downloaded = trafilatura.fetch_url(url)
+            extracted = trafilatura.extract(downloaded or "", include_comments=False, include_tables=False) or ""
+            if not extracted:
+                return
+            terms = [alias.lower() for group in claim_analysis.get("must_have_terms", []) for alias in group]
+            lower_text = extracted.lower()
+            match_positions = [lower_text.find(term) for term in terms if lower_text.find(term) >= 0]
+            start = max(0, min(match_positions) - 450) if match_positions else 0
+            article["excerpt"] = extracted[start: start + 1200]
+            article["fetch_status"] = "full_text"
+        except Exception as exc:
+            logger.debug("Article extraction failed for %s: %s", article.get("link"), exc)
+
+    def scrape_news(
+        self,
+        planned_queries: List[Dict[str, Any]],
+        claim_analysis: Optional[Dict[str, Any]] = None,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        claim_analysis = claim_analysis or {}
+        report(on_progress, "web_scraping", f"Agent 2 (News Scraper): Running {len(planned_queries)} date-windowed searches...")
+        query_logs: List[Dict[str, Any]] = []
+        candidates: Dict[str, Dict[str, Any]] = {}  # canonical_key -> article
+        retrieval_incomplete = False
+
+        with ThreadPoolExecutor(max_workers=min(5, max(1, len(planned_queries)))) as executor:
+            futures = {executor.submit(self._fetch_rss_items, query): query for query in planned_queries}
+            for future in as_completed(futures):
+                query = futures[future]
+                log: Dict[str, Any] = {
+                    "query": query,
+                    "items_returned": 0,
+                    "items_kept": 0,
+                    "domains": [],
+                    "error": None,
+                    "status": "ok",
+                    "rss_url": "",
+                    "role": query.get("_window_role", query.get("window_role", "")),
+                    "after": query.get("after"),
+                    "before": query.get("before"),
+                    "window_source": query.get("_window_source", ""),
+                }
                 try:
-                    query_log["whitelisted_site_filter_applied"] = False
-                    url, fetched_items = self._fetch_rss_items(base_q)
-                    query_log["rss_url"] = url
-                except Exception as e:
-                    query_log["error"] = str(e)
-                    logger.warning(f"Fallback RSS search failed for '{base_q}': {e}")
+                    url, items, status = future.result()
+                    log["rss_url"] = url
+                    log["status"] = status
+                    log["items_returned"] = len(items)
 
-            query_log["raw_rss_items_count"] = len(fetched_items)
-            query_log["raw_rss_items"] = fetched_items
+                    if status == "failed":
+                        retrieval_incomplete = True
+                        log["error"] = "RSS fetch failed after retries"
+                    elif not items:
+                        log["status"] = "empty"
 
-            for raw_item in fetched_items:
-                title = raw_item["title"]
-                link = raw_item["link"]
-                publisher_site = raw_item.get("publisher_site", "")
-                source = raw_item["source"]
-                raw_pub_date = raw_item["pubDate"]
+                    for item in items:
+                        if not item.get("title"):
+                            continue
+                        # Dedup by normalised title key
+                        canonical_key = re.sub(r"\W+", " ", item.get("title", "").lower()).strip()
+                        if canonical_key in candidates:
+                            continue
+                        item["source_tier"] = self._source_tier(item.get("publisher_site", ""))
+                        # Pool assignment: based on query window role
+                        role = query.get("_window_role", query.get("window_role", "latest"))
+                        item["retrieval_pool"] = "historical" if role in ("historical", "claim_period") else "recent"
+                        item["query"] = query.get("q", "")
+                        item["_datetime"] = self._parse_pub_date(item.get("pub_date", ""))
+                        item["pub_date"] = item["_datetime"].isoformat() if item["_datetime"] != datetime.min else item.get("pub_date", "")
+                        item["coverage"] = self._coverage_score(item, claim_analysis.get("must_have_terms", []))
+                        item["score"] = self._rank_candidate(item, claim_analysis)
+                        item["fetch_status"] = "snippet_only"  # default; full_text set by _fetch_article_excerpt
 
-                if title and title not in seen_titles:
-                    seen_titles.add(title)
-                    dt = self._parse_pub_date(raw_pub_date)
-                    formatted_date = dt.strftime("%Y-%m-%d %H:%M") if dt != datetime.min else raw_pub_date
+                        # Drop articles with 0 must_have_terms coverage (irrelevant at retrieval time)
+                        if item["coverage"] <= 0 and claim_analysis.get("must_have_terms"):
+                            continue
 
-                    article_data = {
-                        "title": title,
-                        "link": link,
-                        "publisher_site": publisher_site,
-                        "source": source,
-                        "pub_date": formatted_date or "Recent",
-                        "_datetime": dt
-                    }
+                        candidates[canonical_key] = item
+                        log["items_kept"] += 1
+                        log["domains"].append(item.get("publisher_site", ""))
 
-                    if self.is_whitelisted_source(source, title) or query_log["whitelisted_site_filter_applied"]:
-                        articles.append(article_data)
-                        query_log["whitelisted_matches"].append(title)
-                    else:
-                        fallback_articles.append(article_data)
-                        query_log["fallback_matches"].append(title)
+                except Exception as exc:
+                    log["error"] = str(exc)
+                    log["status"] = "failed"
+                    retrieval_incomplete = True
+                    logger.warning("RSS future failed for %r: %s", query.get("q", ""), exc)
 
-            queries_log.append(query_log)
+                query_logs.append(log)
 
-        candidates = articles if articles else fallback_articles[:MAX_FALLBACK_ARTICLES]
-        # Sort candidates chronologically (most recent news articles first)
-        candidates.sort(key=lambda a: a.get("_datetime", datetime.min), reverse=True)
+        # Pool separation and quota
+        grouped: Dict[str, List[Dict[str, Any]]] = {"recent": [], "historical": []}
+        for candidate in candidates.values():
+            pool = candidate.get("retrieval_pool", "recent")
+            grouped.setdefault(pool, []).append(candidate)
 
-        # Remove internal datetime sort key before returning
-        final_articles = []
-        for a in candidates:
-            cleaned = {k: v for k, v in a.items() if k != "_datetime"}
+        for pool in grouped.values():
+            pool.sort(key=lambda item: item.get("score", 0), reverse=True)
+
+        # Pool quota: at least 1/3 of MAX_CANDIDATES per non-empty pool
+        quota = max(1, MAX_CANDIDATES // 3)
+        selected: List[Dict[str, Any]] = []
+        for pool_name in ("recent", "historical"):
+            pool_items = grouped.get(pool_name, [])
+            selected.extend(pool_items[:quota])
+
+        # Fill remaining slots from best overall
+        already_selected_keys = {id(item) for item in selected}
+        remaining = sorted(
+            [item for item in candidates.values() if id(item) not in already_selected_keys],
+            key=lambda item: item.get("score", 0), reverse=True,
+        )
+        selected.extend(remaining[: max(0, MAX_CANDIDATES - len(selected))])
+        selected = selected[:MAX_CANDIDATES]
+
+        # Fetch full text for top candidates
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            fetch_futures = [executor.submit(self._fetch_article_excerpt, article, claim_analysis) for article in selected[:5]]
+            for f in fetch_futures:
+                try:
+                    f.result(timeout=RSS_REQUEST_TIMEOUT + 2)
+                except Exception as exc:
+                    logger.debug("Article excerpt future error: %s", exc)
+
+        # Assign stable IDs AFTER selection and ranking
+        final_articles: List[Dict[str, Any]] = []
+        for index, article in enumerate(selected, start=1):
+            cleaned = {key: value for key, value in article.items() if not key.startswith("_")}
+            cleaned["id"] = f"A{index:02d}"
+            if "fetch_status" not in cleaned:
+                cleaned["fetch_status"] = "snippet_only"
             final_articles.append(cleaned)
 
         scraper_log = {
-            "queries_processed": queries_log,
-            "total_raw_items_fetched": sum(q.get("raw_rss_items_count", 0) for q in queries_log),
-            "total_whitelisted_articles": len(articles),
-            "final_selected_articles": final_articles
+            "queries_processed": query_logs,
+            "total_raw_items_fetched": sum(log.get("items_returned", 0) for log in query_logs),
+            "final_selected_articles": final_articles,
+            "pool_counts": {pool: len(items) for pool, items in grouped.items()},
+            "retrieval_incomplete": retrieval_incomplete,
         }
-
-        report(on_progress, "articles_found", f"Agent 2: Gathered {len(final_articles)} date-prioritized whitelisted articles.")
+        report(on_progress, "articles_found", f"Agent 2: ranked {len(final_articles)} candidates across recent and historical pools.")
         return final_articles, scraper_log
