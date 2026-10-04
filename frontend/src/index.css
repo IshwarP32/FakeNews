@@ -82,6 +82,8 @@ footer { display: flex; justify-content: space-between; padding: 17px 0; border-
 @media (max-width: 480px) { .system-state { padding: 7px; font-size: 0; }.system-state i { margin: 0; }.intro-row h1 { font-size: 29px; }.input-panel, .timeline-card, .result-panel { padding: 17px; }.action-row { flex-direction: column; }.ghost-button { min-height: 38px; }.probability-top { align-items: start; flex-direction: column; gap: 10px; }.probability-meta { align-items: start; } }
 .pipeline-complete { background: var(--green); box-shadow: 0 0 0 4px #10b98122; animation: none; }
 .sources-block h3 { margin: 0 0 12px; color: var(--muted); font: 10px ui-monospace, monospace; letter-spacing: .1em; text-transform: uppercase; }
+.source-group { margin-bottom: 24px; }
+.source-group:last-child { margin-bottom: 0; }
 .context-heading { margin-top: 24px !important; }
 .source-title span { color: var(--dim); }
 .source-quote { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
