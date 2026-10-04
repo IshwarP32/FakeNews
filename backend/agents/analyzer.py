@@ -167,40 +167,82 @@ class EvidenceAnalyzerAgent:
                     valid_direct_ids.add(str(assessment.get("id")))
 
         # -----------------------------------------------------------------------
-        # 2. Validate proposition IDs
+        # 2. Validate proposition IDs and collect structured evidence
         # -----------------------------------------------------------------------
         valid_ids = set(articles_by_id.keys())
+        prop_supporting_ids = set()
+        prop_contradicting_ids = set()
         for proposition in result.get("propositions", []):
             proposition["supporting_ids"] = [item for item in proposition.get("supporting_ids", []) if item in valid_ids]
             proposition["contradicting_ids"] = [item for item in proposition.get("contradicting_ids", []) if item in valid_ids]
+            prop_supporting_ids.update(proposition["supporting_ids"])
+            prop_contradicting_ids.update(proposition["contradicting_ids"])
+
+        hc_evidence_ids = {
+            item
+            for hc in result.get("historical_context", [])
+            for item in hc.get("supporting_ids", [])
+            if item in valid_ids
+        }
+        structured_evidence_ids = prop_supporting_ids | prop_contradicting_ids | hc_evidence_ids | (valid_direct_ids & valid_ids)
 
         # -----------------------------------------------------------------------
         # 3. Citation validation in summary/corrected_news/limitations
         # -----------------------------------------------------------------------
-        citation_ids = set(re.findall(r"\[(A\d+)\]", " ".join(
-            str(result.get(field) or "") for field in ("summary", "corrected_news", "limitations")
-        )))
-        invalid_citations = citation_ids - valid_ids
+        text_fields = ("summary", "corrected_news", "limitations")
+        text_to_search = " ".join(str(result.get(field) or "") for field in text_fields)
+
+        bracketed_ids = set(re.findall(r"\[(A\d+)\]", text_to_search))
+        paren_ids = set(re.findall(r"\((A\d+)\)", text_to_search))
+        bare_ids = set(re.findall(r"\b(A\d{2,3})\b", text_to_search))
+
+        text_cited_ids = bracketed_ids | paren_ids | (bare_ids & valid_ids)
+        citation_ids = set(bracketed_ids) | (paren_ids & valid_ids)
+
+        # Auto-heal citations from verified propositions if summary lacks inline citations
+        if not citation_ids and structured_evidence_ids:
+            citation_ids = set(structured_evidence_ids)
+            recent_ids = [aid for aid in sorted(prop_supporting_ids) if articles_by_id.get(aid, {}).get("retrieval_pool") == "recent"]
+            hist_ids = [aid for aid in sorted(prop_supporting_ids) if articles_by_id.get(aid, {}).get("retrieval_pool") == "historical"]
+            if recent_ids and hist_ids:
+                top_citations = recent_ids[:2] + hist_ids[:2]
+            else:
+                preferred_ids = sorted(prop_supporting_ids or prop_contradicting_ids or structured_evidence_ids)
+                top_citations = preferred_ids[:4]
+            citation_tag = " ".join(f"[{aid}]" for aid in top_citations)
+            current_summary = (result.get("summary") or "").strip()
+            if current_summary and not re.search(r"\[A\d+\]", current_summary):
+                result["summary"] = f"{current_summary} {citation_tag}".strip()
+                warnings.append(f"Auto-healed citations into summary from verified propositions: {citation_tag}")
+
+        # Check for invalid citation IDs (e.g. model hallucinations like [A99])
+        invalid_citations = (bracketed_ids | paren_ids) - valid_ids
         if invalid_citations:
             result["flags"] = sorted(set(result.get("flags", [])) | {"invalid_citation"})
             result["confidence"] = "Low"
             warnings.append(f"Invalid citation IDs {invalid_citations} - confidence downgraded")
+            if not (text_cited_ids & valid_ids) and not structured_evidence_ids:
+                if result.get("verdict") in {"True", "False", "Partially True", "Misleading"}:
+                    result["verdict"] = "Unverified"
+                    warnings.append("Verdict downgraded: all cited article IDs are invalid and no valid evidence found")
 
-        if result.get("verdict") in {"True", "False", "Partially True", "Misleading"} and result.get("summary") and not citation_ids:
+        # Downgrade only when NO evidence was cited in text or structured propositions
+        if result.get("verdict") in {"True", "False", "Partially True", "Misleading"} and not citation_ids and not structured_evidence_ids:
             result["flags"] = sorted(set(result.get("flags", [])) | {"missing_citation"})
             result["verdict"] = "Unverified"
             result["confidence"] = "Low"
             result["summary"] = "No cited evidence was available to support a validated verdict."
-            warnings.append("Verdict downgraded: no citation IDs in summary")
+            warnings.append("Verdict downgraded: no cited evidence available in text or structured propositions")
 
         # -----------------------------------------------------------------------
         # 4. Grounding check: years and numbers in summary must appear in cited articles
         # -----------------------------------------------------------------------
+        evidence_ids_to_ground = citation_ids | structured_evidence_ids
         cited_article_texts = []
-        for cid in citation_ids:
+        for cid in evidence_ids_to_ground:
             art = articles_by_id.get(cid)
             if art:
-                cited_article_texts.append(f"{art.get('title', '')} {art.get('excerpt', '')}")
+                cited_article_texts.append(f"{art.get('title', '')} {art.get('excerpt', '')} {art.get('pub_date', '')}")
         cited_text_combined = " ".join(cited_article_texts).lower()
 
         for field_name in ("summary", "corrected_news"):
