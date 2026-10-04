@@ -41,16 +41,8 @@ share/python-wheels/
 *.key
 
 # ====================================================================
-# Datasets & ML Artifacts
+# Generated reports
 # ====================================================================
-data/*.csv
-data/*.tsv
-data/*.zip
-*.csv
-models/*.joblib
-models/*.pkl
-models/*.pt
-models/*.onnx
 reports/*.json
 reports/*.txt
 reports/*.csv
@@ -85,4 +77,3 @@ scratch/
 history_logs/
 **/history_logs/
 .web_app_trash/
-docs/
