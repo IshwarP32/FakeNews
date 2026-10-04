@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
 import { analyzeClaimStreamApi } from '../services/analysisApi';
 
 const AnalysisContext = createContext();
@@ -37,7 +38,9 @@ export function AnalysisProvider({ children }) {
   const handleAnalyze = async (e) => {
     e?.preventDefault();
     if (!title.trim() && !text.trim()) {
-      setErrorMsg('Please enter a headline or article text.');
+      const msg = 'Please enter a headline or article text.';
+      setErrorMsg(msg);
+      toast.warn(msg, { toastId: 'empty-input' });
       return;
     }
 
@@ -57,8 +60,20 @@ export function AnalysisProvider({ children }) {
         },
       });
       setResult(data);
+
+      if (data?.error) {
+        toast.error(data.error, { toastId: 'api-error', autoClose: 6000 });
+      } else if (data?.verdict?.flags?.includes('llm_unavailable')) {
+        toast.error('AI models are currently unavailable due to API limits.', { toastId: 'quota-alert', autoClose: 6000 });
+      } else if (data?.verdict?.flags?.includes('retrieval_incomplete')) {
+        toast.info('Notice: Some news source queries timed out; verified with available articles.', { toastId: 'partial-retrieval' });
+      } else {
+        toast.success('Verification analysis complete!', { toastId: 'analysis-success', autoClose: 3500 });
+      }
     } catch (err) {
-      setErrorMsg(err.message || 'Unable to connect to server.');
+      const msg = err.message || 'Unable to connect to server.';
+      setErrorMsg(msg);
+      toast.error(msg, { toastId: 'analysis-error', autoClose: 6000 });
     } finally {
       setIsAnalyzing(false);
     }
