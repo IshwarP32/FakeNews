@@ -15,7 +15,10 @@ import {
   ExternalLink,
   Info,
   Server,
-  Sparkles
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  BookOpen
 } from 'lucide-react';
 
 const trustedPlatformCategories = [
@@ -202,21 +205,50 @@ const guarantees = [
 ];
 
 export default function SystemGuide() {
+  const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('platforms');
 
   return (
-    <section className="system-guide-section">
-      <div className="guide-header">
-        <div>
-          <p className="eyebrow">06 / VERIFICATION METHODOLOGY & SYSTEM GUIDE</p>
-          <h2>How Claims Are Verified & How To Read Your Results</h2>
-          <p className="guide-subtitle">
-            A transparent overview of our multi-platform sourcing, scraping volume, filtering rules, and code-enforced anti-hallucination guarantees.
-          </p>
+    <section className={`system-guide-section ${isOpen ? 'is-open' : ''}`}>
+      <div 
+        className="guide-header-bar"
+        onClick={() => setIsOpen(!isOpen)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsOpen(!isOpen); } }}
+        aria-expanded={isOpen}
+      >
+        <div className="guide-header-left">
+          <div className="guide-icon-badge">
+            <BookOpen size={20} />
+          </div>
+          <div className="guide-header-text">
+            <p className="eyebrow">06 / VERIFICATION METHODOLOGY & SYSTEM GUIDE</p>
+            <h2>How Claims Are Verified & How To Read Your Results</h2>
+            <p className="guide-subtitle">
+              {isOpen 
+                ? 'Multi-platform sourcing hierarchy, dual-pool scraping volume, and code-enforced anti-hallucination rules.'
+                : 'Click to expand our multi-platform sourcing catalog, scraping volume quotas, 5-stage filters, and verdict definitions.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="guide-header-right">
+          <span className="guide-badge-pill">3 Topics</span>
+          <button 
+            type="button" 
+            className={`guide-toggle-btn ${isOpen ? 'active' : ''}`}
+            onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
+          >
+            <span>{isOpen ? 'Collapse Guide' : 'View Methodology'}</span>
+            {isOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          </button>
         </div>
       </div>
 
-      <div className="guide-tabs">
+      {isOpen && (
+        <div className="guide-body-wrapper">
+          <div className="guide-tabs">
         <button
           type="button"
           className={`guide-tab ${activeTab === 'platforms' ? 'active' : ''}`}
@@ -364,6 +396,8 @@ export default function SystemGuide() {
           </div>
         )}
       </div>
-    </section>
+    </div>
+  )}
+</section>
   );
 }
