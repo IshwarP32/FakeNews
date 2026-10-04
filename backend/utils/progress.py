@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Dict, Optional
 
 ProgressCallback = Callable[[Dict[str, Any]], None]
-logger = logging.getLogger("fake_news_risk")
+logger = logging.getLogger("fake_news_verifier")
 
 
 def report(

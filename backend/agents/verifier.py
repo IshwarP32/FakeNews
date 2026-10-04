@@ -1,17 +1,39 @@
-"""Main Gemini Verifier Pipeline Orchestrator."""
+"""Main Gemini Verifier Pipeline Orchestrator.
 
-import os
+Phase 1+5+6+8 improvements:
+- Uses LLMClient (error classification, cooldown, capability table)
+- Zero-article short-circuit in Agent 3 (no Gemini call)
+- Wall-clock budget
+- Per-run telemetry trace
+- No tools for Agent 3 (asserted)
+- claim_analysis sent as JSON (not Python repr)
+- Coverage block with per-window status and retrieval_incomplete
+"""
+
+from __future__ import annotations
+
+import json
 import time
-from datetime import datetime
-from typing import Any, Dict, Optional
-
-from google import genai
-from google.genai import types
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backend.agents.analyzer import EvidenceAnalyzerAgent
 from backend.agents.planner import QueryPlannerAgent
 from backend.agents.scraper import NewsScraperAgent
-from backend.config import CLAIM_TEXT_TRUNCATE_LEN, FALLBACK_MODELS, logger
+from backend.config import (
+    ANALYZER_MODELS,
+    MAX_RSS_REQUESTS,
+    PLANNER_MODELS,
+    VERIFICATION_TIMEOUT_S,
+    logger,
+)
+from backend.config.prompts import (
+    EVIDENCE_ANALYZER_SYSTEM_INSTRUCTION,
+    build_evidence_analysis_prompt,
+)
+from backend.llm_client import LLMClient
+from backend.schemas.verification import EvidenceAnalysis
 from backend.services.history import save_history_log
 from backend.utils.progress import ProgressCallback, report
 
@@ -20,150 +42,264 @@ class GeminiVerifier:
     """Orchestrates Agent 1 (Planner), Agent 2 (Scraper), and Agent 3 (Analyzer)."""
 
     def __init__(self):
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        self.search_tool = types.Tool(google_search=types.GoogleSearch())
+        self.llm_client = LLMClient()
         self.planner = QueryPlannerAgent()
         self.scraper = NewsScraperAgent()
         self.analyzer = EvidenceAnalyzerAgent()
 
-    def _call_gemini(self, prompt: str, use_search: bool = False, on_progress: Optional[ProgressCallback] = None):
-        """Executes Gemini calls using the 10-model fallback chain."""
-        models = [os.getenv("GEMINI_MODEL")] if os.getenv("GEMINI_MODEL") else []
-        for m in FALLBACK_MODELS:
-            if m not in models:
-                models.append(m)
-
-        config = {"temperature": 0}
-        if use_search:
-            config["tools"] = [self.search_tool]
-
-        last_err = None
-        for model in models:
-            for attempt in range(2):
-                try:
-                    logger.info(f"Calling Gemini model: {model} (attempt {attempt + 1})")
-                    resp = self.client.models.generate_content(
-                        model=model, contents=prompt, config=types.GenerateContentConfig(**config)
-                    )
-                    return resp, model
-                except Exception as e:
-                    last_err = e
-                    logger.warning(f"Model {model} failed: {e}")
-                    if any(x in str(e).lower() for x in ["404", "not found", "invalid"]):
-                        break
-                    time.sleep(2)
-            report(on_progress, "model_fallback", f"{model} unavailable. Trying next fallback model...")
-
-        logger.error("All fallback models failed.")
-        raise last_err or RuntimeError("All models failed")
-
     def verify(self, title: str = "", text: str = "", on_progress: Optional[ProgressCallback] = None) -> Dict[str, Any]:
         claim = " ".join(f"{title} {text}".split())
         if not claim:
-            return {"verdict": "Unverified", "confidence": "Low", "summary": "Empty claim provided.", "sources_used": []}
+            return {
+                "schema_version": "2.0",
+                "verdict": {
+                    "verdict": "Unverified",
+                    "confidence": "Low",
+                    "summary": "Empty claim provided.",
+                    "limitations": "A headline or article text is required.",
+                    "flags": [],
+                },
+                "evidence_articles": [],
+                "context_articles": [],
+                "coverage": {},
+            }
 
-        logger.info(f"Starting verification pipeline for claim: {claim[:80]}...")
+        logger.info("Starting verification pipeline for claim: %s...", claim[:80])
         report(on_progress, "analysis_started", "Starting verification pipeline...")
 
-        # Step 1: Agent 1 - Search Query Planner
-        queries, planner_log = self.planner.plan_queries(claim, self._call_gemini, on_progress)
+        wall_clock_start = time.monotonic()
+        wall_clock_deadline = wall_clock_start + VERIFICATION_TIMEOUT_S
 
-        # Step 2: Agent 2 - Live News Scraper (Date Prioritized & Detailed RSS Logging)
-        articles, scraper_log = self.scraper.scrape_news(queries, on_progress)
-
-        # Build numbered date-aware evidence prompt for Agent 3
-        evidence = ""
-        if articles:
-            evidence_lines = [
-                f"Article #{idx + 1}: [Published: {a.get('pub_date', 'Recent')}] \"{a['title']}\" (Source: {a['source']})"
-                for idx, a in enumerate(articles)
-            ]
-            evidence = "SCRAPED NEWS EVIDENCE (Numbered List, Ordered by Publication Date):\n" + "\n".join(evidence_lines)
-
-        today_str = datetime.now().strftime("%B %d, %Y")
-
-        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & article relevance...")
-        prompt = f"""You are a professional news fact-checker. Today's date is {today_str}.
-
-Verify this claim: "{claim[:CLAIM_TEXT_TRUNCATE_LEN]}"
-
-{evidence}
-
-STRICT TEMPORAL EVALUATION RULES:
-1. First classify the claim's temporal scope as `Historical`, `Current-specific`, or `Undated factual`.
-2. An `Undated factual` claim states whether an event happened, without saying today, currently, this year, latest, ongoing, or giving a date. Judge it against the event's historical truth. Do NOT mark it false merely because the event happened before {today_str}.
-3. For an `Undated factual` claim, an authoritative report from the event's actual year is valid evidence. Example: "Chandrayaan-3 successfully launched by ISRO" is true because the launch occurred in 2023; the absence of a 2026 date does not contradict the claim.
-4. A `Current-specific` claim explicitly asserts present timing, such as today, currently, latest, ongoing, or a named current year. Only then should an older event be treated as stale or misleading, and only if that timing makes the claim materially false.
-5. A `Historical` claim includes an explicit past date or period. Verify the event against evidence from that period and later authoritative corrections.
-6. Never confuse an article's publication date with the date the event occurred. Extract the event date from the article and use it to test the claim.
-7. Use recent articles for context, but do not prefer recency over direct relevance and historical accuracy.
-8. Only call a claim False when its core factual proposition is contradicted. If the event is true but the claim omits a date, keep it True and explain the date in `date_analysis`.
-9. Select ONLY the numbered articles above that are DIRECTLY relevant to verifying or refuting this claim. Exclude unrelated/off-topic articles.
-10. Return 1-indexed article numbers of relevant articles in `relevant_article_indices`.
-
-Return JSON strictly in this format:
-{{
-  "verdict": "True|False|Partially True|Unverified",
-  "confidence": "High|Medium|Low",
-  "summary": "2 sentence explanation with explicit date context",
-  "corrected_news": "actual verified facts including accurate dates",
-  "reasoning": ["reason 1 (must analyze dates & source freshness)", "reason 2"],
-    "temporal_scope": "Historical|Current-specific|Undated factual",
-  "date_analysis": "Clear assessment of news freshness, publication dates, and whether this claim matches current events or is recycled old news",
-  "relevant_article_indices": [1, 2],
-  "sources_used": ["source 1", "source 2"]
-}}"""
-
-        # Step 3: Agent 3 - Evidence Analysis
-        use_search = len(articles) == 0
-        resp, model_used = self._call_gemini(prompt, use_search=use_search, on_progress=on_progress)
-        raw_text = self.analyzer.extract_text(resp)
-        result = self.analyzer.parse_json(raw_text)
-
-        analyzer_log = {
-            "prompt_sent": prompt,
-            "model_used": model_used,
-            "used_fallback_google_search": use_search,
-            "raw_gemini_response": raw_text,
-            "parsed_result": result,
+        trace: Dict[str, Any] = {
+            "claim": claim,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "planner_log": None,
+            "scraper_log": None,
+            "analyzer_log": None,
         }
 
-        # Filter grounding_sources to include ONLY relevant articles selected by Gemini
-        raw_indices = result.get("relevant_article_indices", [])
-        valid_indices = set()
+        try:
+            local_zone = ZoneInfo("Asia/Kolkata")
+        except ZoneInfoNotFoundError:
+            local_zone = timezone(timedelta(hours=5, minutes=30))
+        today_str = datetime.now(local_zone).date().isoformat()
 
-        if isinstance(raw_indices, list):
-            for idx_val in raw_indices:
-                try:
-                    i = int(idx_val) - 1
-                    if 0 <= i < len(articles):
-                        valid_indices.add(i)
-                except (ValueError, TypeError):
-                    pass
+        # -----------------------------------------------------------------
+        # Step 1: Agent 1 - Query Planner
+        # -----------------------------------------------------------------
+        try:
+            queries, planner_log = self.planner.plan_queries(
+                claim=claim,
+                llm_client=self.llm_client,
+                models=PLANNER_MODELS,
+                on_progress=on_progress,
+                max_rss_requests=MAX_RSS_REQUESTS,
+            )
+            trace["planner_log"] = planner_log
+        except Exception as exc:
+            err_msg = str(exc)
+            logger.error("Agent 1 failed: %s", err_msg)
+            if "llm_config_error" in err_msg:
+                reason_code = "llm_config_error"
+            elif "llm_quota_exhausted" in err_msg:
+                reason_code = "llm_quota_exhausted"
+            else:
+                reason_code = "llm_unavailable"
+            return self._error_result(reason_code, err_msg)
 
-        # Smart Fallback: if Gemini provided no indices or invalid ones, match against cited sources/titles or top 3
-        if not valid_indices and articles:
-            sources_used_names = [str(s).lower() for s in result.get("sources_used", [])]
-            for idx, a in enumerate(articles):
-                if any(s in a["source"].lower() or s in a["title"].lower() for s in sources_used_names):
-                    valid_indices.add(idx)
-            if not valid_indices:
-                valid_indices = set(range(min(3, len(articles))))
+        claim_analysis = planner_log.get("claim_analysis", {"normalized_claim": claim})
 
-        grounded_sources = []
-        for idx in sorted(valid_indices):
-            a = articles[idx]
-            grounded_sources.append({
-                "title": f"{a['title']} - {a['source']}",
-                "url": a["link"],
-                "publisher_site": a.get("publisher_site", ""),
-                "pub_date": a.get("pub_date", ""),
-                "article_index": idx + 1
-            })
+        # -----------------------------------------------------------------
+        # Step 2: Agent 2 - News Scraper
+        # -----------------------------------------------------------------
+        articles, scraper_log = self.scraper.scrape_news(
+            queries,
+            claim_analysis=claim_analysis,
+            on_progress=on_progress,
+        )
+        trace["scraper_log"] = {"query_count": len(queries), "articles_found": len(articles)}
 
-        result["grounding_sources"] = grounded_sources
+        # -----------------------------------------------------------------
+        # Step 3: Agent 3 - Evidence Analysis
+        # -----------------------------------------------------------------
+        report(on_progress, "analyzing_evidence", "Agent 3 (Evidence Analyzer): Evaluating claim & article relevance...")
 
-        # Save complete query history log with raw RSS and Gemini telemetry
+        # Build coverage dict to pass to Agent 3
+        query_logs = scraper_log.get("queries_processed", [])
+        coverage_for_agent3 = {
+            "queries_searched": len(query_logs),
+            "retrieval_incomplete": scraper_log.get("retrieval_incomplete", False),
+            "windows": [
+                {
+                    "role": log.get("role", ""),
+                    "after": log.get("after"),
+                    "before": log.get("before"),
+                    "status": log.get("status", "ok"),
+                    "items_kept": log.get("items_kept", 0),
+                    "error": log.get("error"),
+                }
+                for log in query_logs
+            ],
+        }
+
+        # ZERO-ARTICLE SHORT-CIRCUIT: never call Gemini with zero articles
+        if not articles:
+            logger.info("Zero articles retrieved; returning deterministic Unverified without Gemini call")
+            result = self.analyzer.build_zero_article_result(claim_analysis, scraper_log)
+            model_used = "none (zero-article short-circuit)"
+            raw_text = ""
+        else:
+            # ASSERT: no tools in Agent 3 call (Phase 3 rule 1, invariant)
+            # LLMClient.generate() never adds tools - this is structural, not a flag
+            self.llm_client.assert_no_tools_in_analyzer_call()
+
+            prompt = build_evidence_analysis_prompt(
+                today_str,
+                claim_analysis,
+                articles,
+                coverage=coverage_for_agent3,
+            )
+
+            raw_text = ""
+            result = None
+            try:
+                resp, model_used = self.llm_client.generate(
+                    models=ANALYZER_MODELS,
+                    prompt=prompt,
+                    system_instruction=EVIDENCE_ANALYZER_SYSTEM_INSTRUCTION,
+                    response_schema=EvidenceAnalysis,
+                    thinking_level="medium",
+                    wall_clock_deadline=wall_clock_deadline,
+                )
+                raw_text = self.analyzer.extract_text(resp)
+                result = self.analyzer.parse_json(raw_text)
+
+                # Retry once on validation failure
+                if result.get("verdict") == "Unverified" and not result.get("article_assessments") and articles:
+                    logger.info("Agent 3 returned empty assessments; retrying once")
+                    resp2, model_used = self.llm_client.generate(
+                        models=ANALYZER_MODELS,
+                        prompt=prompt,
+                        system_instruction=EVIDENCE_ANALYZER_SYSTEM_INSTRUCTION,
+                        response_schema=EvidenceAnalysis,
+                        thinking_level="medium",
+                        wall_clock_deadline=wall_clock_deadline,
+                        retry_prompt_suffix="Please assess every provided article and populate article_assessments.",
+                    )
+                    raw_text = self.analyzer.extract_text(resp2)
+                    result = self.analyzer.parse_json(raw_text)
+
+            except Exception as exc:
+                err_msg = str(exc)
+                logger.error("Agent 3 failed: %s", err_msg)
+                if "llm_config_error" in err_msg:
+                    return self._error_result("llm_config_error", err_msg)
+                elif "llm_quota_exhausted" in err_msg:
+                    return self._error_result("llm_quota_exhausted", err_msg)
+                elif "wall-clock budget" in err_msg:
+                    return self._error_result("llm_timeout", "Verification exceeded time budget. Please retry.")
+                # Degrade: use proposition-derived result
+                result = self.analyzer.build_zero_article_result(claim_analysis, scraper_log)
+                result["limitations"] = f"Evidence analysis failed ({err_msg[:200]}). Retrieval succeeded but analysis is unavailable."
+                model_used = "none (analyzer failed)"
+
+        # Validate and ground the result
+        result = self.analyzer.validate_grounding(result, articles)
+
+        # -----------------------------------------------------------------
+        # Build response
+        # -----------------------------------------------------------------
+        article_by_id = {article.get("id"): article for article in articles}
+        evidence_articles: List[Dict[str, Any]] = []
+        context_articles: List[Dict[str, Any]] = []
+
+        for assessment in result.get("article_assessments", []):
+            article = article_by_id.get(assessment.get("id"))
+            if not article:
+                continue
+            if assessment.get("relevance") == "irrelevant":
+                continue  # Never return irrelevant articles to frontend
+            article_view = {
+                **article,
+                "relevance": assessment.get("relevance"),
+                "stance": assessment.get("stance"),
+                "evidence_quote": assessment.get("evidence_quote"),
+                "event_date": assessment.get("event_date", {}),
+                "article_kind": assessment.get("article_kind", "unclear"),
+                "near_miss_entity": assessment.get("near_miss_entity"),
+                "applies_to_reading": assessment.get("applies_to_reading", "neither"),
+            }
+            if assessment.get("relevance") == "direct" and assessment.get("stance") in {"supports", "contradicts"}:
+                evidence_articles.append(article_view)
+            elif assessment.get("relevance") == "contextual" or (
+                assessment.get("relevance") == "direct" and assessment.get("stance") == "neutral_context"
+            ):
+                context_articles.append(article_view)
+
+        # Code-side verdict consistency check (Phase 6.2 - already done in validate_grounding)
+        # Additional: ensure verdict is not True/False if no direct evidence in final list
+        direct_ids = {a.get("id") for a in evidence_articles}
+        if result.get("verdict") in {"True", "False", "Partially True", "Misleading"} and not direct_ids:
+            result["verdict"] = "Unverified"
+            result["confidence"] = "Low"
+            result["flags"] = sorted(set(result.get("flags", [])) | {"no_direct_evidence"})
+            result["limitations"] = "No validated direct evidence supported the primary reading."
+
+        # Confidence capping: unknown sources alone can't support High
+        independent_sources_with_tier = {
+            article.get("publisher_site") or article.get("source")
+            for article in evidence_articles
+            if article.get("source_tier") != "unknown"
+        }
+        if len(independent_sources_with_tier) < 2 and result.get("confidence") == "High":
+            result["confidence"] = "Medium"
+
+        # -----------------------------------------------------------------
+        # Coverage block
+        # -----------------------------------------------------------------
+        independent_sources_all = {article.get("publisher_site") or article.get("source") for article in evidence_articles}
+        pub_dates = sorted(a.get("pub_date", "") for a in articles if a.get("pub_date"))
+
+        coverage = {
+            "queries_run": len(queries),
+            "windows": [
+                {
+                    "role": log.get("role", ""),
+                    "after": log.get("after"),
+                    "before": log.get("before"),
+                    "status": log.get("status", "ok"),
+                    "items_returned": log.get("items_returned", 0),
+                    "items_kept": log.get("items_kept", 0),
+                    "error": log.get("error"),
+                    "rss_url": log.get("rss_url", ""),
+                    "purpose": log.get("query", {}).get("purpose", ""),
+                }
+                for log in query_logs
+            ],
+            "articles_retrieved": scraper_log.get("total_raw_items_fetched", 0),
+            "articles_ranked": len(articles),
+            "articles_analysed": len(result.get("article_assessments", [])),
+            "independent_sources": len(independent_sources_all),
+            "date_range": {
+                "earliest_publication": pub_dates[0] if pub_dates else None,
+                "latest_publication": pub_dates[-1] if pub_dates else None,
+            },
+            "empty_pools": [pool for pool, count in scraper_log.get("pool_counts", {}).items() if count == 0],
+            "retrieval_incomplete": scraper_log.get("retrieval_incomplete", False),
+        }
+
+        # -----------------------------------------------------------------
+        # Telemetry log
+        # -----------------------------------------------------------------
+        analyzer_log = {
+            "model_used": model_used,
+            "raw_gemini_response": raw_text,
+            "parsed_result": result,
+            "article_count_sent": len(articles),
+            "zero_article_short_circuit": not articles,
+        }
+        trace["analyzer_log"] = {"model_used": model_used, "verdict": result.get("verdict")}
+
         save_history_log(
             claim=claim,
             title=title,
@@ -174,11 +310,43 @@ Return JSON strictly in this format:
             verdict=result,
         )
 
-        logger.info(f"Verification complete: {result.get('verdict')} using model {model_used}. Relevant sources count: {len(grounded_sources)}")
+        logger.info(
+            "Verification complete: %s (%s) using model %s. Evidence: %d, Context: %d",
+            result.get("verdict"), result.get("confidence"), model_used,
+            len(evidence_articles), len(context_articles),
+        )
         report(
             on_progress,
             "verification_completed",
             f"Verdict: {result.get('verdict')} ({result.get('confidence')} confidence)",
-            verdict=result
+            verdict=result,
         )
-        return result
+        return {
+            "schema_version": "2.0",
+            "verdict": result,
+            "evidence_articles": evidence_articles,
+            "context_articles": context_articles,
+            "coverage": coverage,
+        }
+
+    def _error_result(self, reason_code: str, message: str) -> Dict[str, Any]:
+        """Return a structured error state (never an invented verdict)."""
+        logger.error("Pipeline error: %s - %s", reason_code, message)
+        guidance = {
+            "llm_config_error": "A configuration error occurred. Please contact support.",
+            "llm_quota_exhausted": "API quota exceeded. Please retry in a few minutes.",
+            "llm_unavailable": "The AI service is temporarily unavailable. Please retry.",
+            "llm_timeout": "Analysis exceeded the time budget. Please retry.",
+        }.get(reason_code, "An unexpected error occurred. Please retry.")
+        return {
+            "schema_version": "2.0",
+            "error": {
+                "reason_code": reason_code,
+                "message": message,
+                "guidance": guidance,
+            },
+            "verdict": None,
+            "evidence_articles": [],
+            "context_articles": [],
+            "coverage": {},
+        }
