@@ -111,11 +111,26 @@ def _classify_error(exc: Exception) -> Tuple[str, Optional[int]]:
     """Classify an exception into an error category and optional retry delay seconds."""
     msg = str(exc).lower()
     exc_type = type(exc).__name__
+    import re
 
-    # Check for HTTP status codes in message
-    if "400" in msg or "invalid_argument" in msg:
-        return EC_CONFIG, None
-    if "401" in msg or "403" in msg or "unauthenticated" in msg or "permission" in msg:
+    # 1. Check for QUOTA / 429 FIRST (prevent status code substring collisions like 44031s matching 403)
+    if "429" in msg or "resource_exhausted" in msg or "quota" in msg or "rate limit" in msg:
+        retry_delay = None
+        delay_match = re.search(r"retrydelay.*?(\d+)s", msg)
+        if delay_match:
+            retry_delay = int(delay_match.group(1))
+        else:
+            delay_match = re.search(r"retry.{0,20}?(\d+)\s*s", msg)
+            if delay_match:
+                retry_delay = int(delay_match.group(1))
+        return EC_QUOTA, retry_delay
+
+    # 2. Check for TRANSIENT errors (500, 502, 503, 504, timeout, connection)
+    if re.search(r"\b(500|502|503|504)\b", msg) or "internal" in msg or "unavailable" in msg or "timeout" in msg:
+        return EC_TRANSIENT, None
+
+    # 3. Check for CONFIG / CLIENT errors (400, 401, 403, 404, schema, auth)
+    if re.search(r"\b(400|401|403|404)\b", msg) or "invalid_argument" in msg or "unauthenticated" in msg or "permission" in msg:
         return EC_CONFIG, None
     if "additionalproperties" in msg.replace("_", "").lower():
         return EC_CONFIG, None
@@ -127,22 +142,6 @@ def _classify_error(exc: Exception) -> Tuple[str, Optional[int]]:
         return EC_CONFIG, None
     if "valueerror" in exc_type.lower() and ("schema" in msg or "additionalproperties" in msg):
         return EC_CONFIG, None
-
-    if "429" in msg or "resource_exhausted" in msg or "quota" in msg or "rate limit" in msg:
-        # Try to parse retryDelay from the message
-        retry_delay = None
-        import re
-        delay_match = re.search(r"retrydelay.*?(\d+)s", msg)
-        if delay_match:
-            retry_delay = int(delay_match.group(1))
-        else:
-            delay_match = re.search(r"retry.{0,20}?(\d+)\s*s", msg)
-            if delay_match:
-                retry_delay = int(delay_match.group(1))
-        return EC_QUOTA, retry_delay
-
-    if "500" in msg or "503" in msg or "internal" in msg or "unavailable" in msg:
-        return EC_TRANSIENT, None
     if "timeout" in msg or "timed out" in msg or "connection" in msg or "read operation" in msg:
         return EC_TRANSIENT, None
 

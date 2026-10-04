@@ -17,6 +17,11 @@ from backend.agents.verifier import GeminiVerifier
 
 
 def main() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Verify a news claim using the multi-agent fake news verification pipeline."
     )
