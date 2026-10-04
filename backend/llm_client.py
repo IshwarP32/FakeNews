@@ -49,6 +49,18 @@ CAPABILITY_TABLE: Dict[str, Dict[str, Any]] = {
         "thinking_param": "none",
         "supports_structured_output": True,
     },
+    # Gemini 3.5 Flash
+    "gemini-3.5-flash": {
+        "supports_thinking": True,
+        "thinking_param": "budget",
+        "supports_structured_output": True,
+    },
+    # Gemini 3.1 Flash Lite
+    "gemini-3.1-flash-lite": {
+        "supports_thinking": False,
+        "thinking_param": "none",
+        "supports_structured_output": True,
+    },
     # Gemini 2.0 Flash
     "gemini-2.0-flash": {
         "supports_thinking": False,

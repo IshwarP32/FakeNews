@@ -43,6 +43,7 @@ class ClaimAnalysis(BaseModel):
     entities: list[Entity] = Field(default_factory=list)
     must_have_terms: list[list[str]] = Field(default_factory=list)
     likely_confusions: list[str] = Field(default_factory=list)
+    analysis_degraded: bool = False
 
 
 class PlannedQuery(BaseModel):

@@ -52,7 +52,7 @@ PLANNER_MODELS: list[str] = [
     m.strip()
     for m in os.getenv(
         "GEMINI_PLANNER_MODELS",
-        "gemini-2.5-flash-lite-preview-06-17,gemini-2.0-flash,gemini-1.5-flash",
+        "gemini-2.5-flash,gemini-2.5-flash-lite,gemini-3.5-flash",
     ).split(",")
     if m.strip()
 ]
@@ -62,13 +62,13 @@ ANALYZER_MODELS: list[str] = [
     m.strip()
     for m in os.getenv(
         "GEMINI_ANALYZER_MODELS",
-        "gemini-2.5-flash,gemini-2.0-flash,gemini-1.5-pro",
+        "gemini-2.5-flash,gemini-3.5-flash,gemini-2.5-flash-lite",
     ).split(",")
     if m.strip()
 ]
 
 # Legacy single-model env vars (for backwards compatibility)
-PLANNER_MODEL = PLANNER_MODELS[0] if PLANNER_MODELS else "gemini-2.0-flash"
+PLANNER_MODEL = PLANNER_MODELS[0] if PLANNER_MODELS else "gemini-2.5-flash"
 ANALYZER_MODEL = ANALYZER_MODELS[0] if ANALYZER_MODELS else "gemini-2.5-flash"
 
 # Legacy FALLBACK_MODELS for backwards compat (unused in new code path)
