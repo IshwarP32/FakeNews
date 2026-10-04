@@ -15,12 +15,14 @@ Phase 3 improvements:
 from __future__ import annotations
 
 import html
+import json
 import re
 import socket
 import time
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
@@ -204,6 +206,151 @@ class NewsScraperAgent:
         except Exception as exc:
             logger.debug("Article extraction failed for %s: %s", article.get("link"), exc)
 
+    def _fetch_wikipedia_candidates(self, claim_analysis: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Fetch encyclopedic reference fallback articles from Wikipedia MediaWiki API.
+
+        Source tier: 'reference'. Assigned a lower credibility prior (0.5 vs official 1.0)
+        since community wikis are openly editable.
+        """
+        wiki_log: Dict[str, Any] = {
+            "query": {"q": "wikipedia:reference_fallback", "role": "historical"},
+            "items_returned": 0,
+            "items_kept": 0,
+            "domains": ["wikipedia.org"],
+            "error": None,
+            "status": "ok",
+            "rss_url": "https://en.wikipedia.org/w/api.php",
+            "role": "historical",
+            "window_source": "wikipedia_fallback",
+        }
+
+        if not claim_analysis:
+            wiki_log["status"] = "empty"
+            return [], wiki_log
+
+        entities = [e.get("name") for e in claim_analysis.get("entities", []) if e.get("name")]
+        explicit_dates = claim_analysis.get("explicit_dates", [])
+        time_ref = claim_analysis.get("time_reference", "latest")
+        is_historical = time_ref in ("explicit_date", "timeless_historical", "historical") or bool(explicit_dates)
+        pool = "historical" if is_historical else "recent"
+
+        search_queries: List[str] = []
+        if entities:
+            if len(entities) >= 2:
+                search_queries.append(f'"{entities[0]}" "{entities[1]}"')
+            for ent in reversed(entities):
+                if explicit_dates:
+                    search_queries.append(f'"{ent}" {explicit_dates[0]}')
+                search_queries.append(f'"{ent}"')
+        else:
+            norm_claim = claim_analysis.get("normalized_claim", "")
+            if norm_claim:
+                search_queries.append(norm_claim)
+
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "FakeNewsVerifier/2.0 (research; educational; contact: ishwarpatil8767@gmail.com)"
+        })
+
+        found_titles: List[str] = []
+        for q in search_queries[:4]:
+            try:
+                resp = session.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "query",
+                        "list": "search",
+                        "srsearch": q,
+                        "format": "json",
+                        "utf8": "1",
+                        "srlimit": "2",
+                    },
+                    timeout=5,
+                )
+                if resp.status_code == 200:
+                    for item in resp.json().get("query", {}).get("search", []):
+                        t = item.get("title")
+                        if t and t not in found_titles:
+                            found_titles.append(t)
+            except Exception as exc:
+                logger.debug("Wikipedia search query %r failed: %s", q, exc)
+
+        wiki_log["items_returned"] = len(found_titles)
+        if not found_titles:
+            wiki_log["status"] = "empty"
+            return [], wiki_log
+
+        wiki_candidates: List[Dict[str, Any]] = []
+        must_have_aliases = [alias.lower() for g in claim_analysis.get("must_have_terms", []) for alias in g]
+        target_anchors = [d.lower() for d in explicit_dates] + must_have_aliases
+
+        for title in found_titles[:2]:
+            try:
+                resp = session.get(
+                    "https://en.wikipedia.org/w/api.php",
+                    params={
+                        "action": "query",
+                        "prop": "extracts|info",
+                        "inprop": "url",
+                        "explaintext": "1",
+                        "titles": title,
+                        "format": "json",
+                        "utf8": "1",
+                    },
+                    timeout=5,
+                )
+                if resp.status_code != 200:
+                    continue
+                pages = resp.json().get("query", {}).get("pages", {})
+                for pid, p in pages.items():
+                    extract = (p.get("extract") or "").strip()
+                    if not extract:
+                        continue
+                    page_url = p.get("fullurl") or f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+
+                    paragraphs = [para.strip() for para in extract.split("\n\n") if para.strip()]
+                    best_paras = []
+                    for para in paragraphs:
+                        para_lower = para.lower()
+                        has_date = any(d.lower() in para_lower for d in explicit_dates) if explicit_dates else True
+                        has_entity = any(alias.lower() in para_lower for alias in must_have_aliases) if must_have_aliases else True
+                        if has_date and has_entity:
+                            best_paras.append(para)
+
+                    if best_paras:
+                        excerpt = "\n\n".join(best_paras)[:1500]
+                    else:
+                        para_anchors = [para for para in paragraphs if any(a in para.lower() for a in target_anchors)]
+                        if para_anchors:
+                            excerpt = "\n\n".join(para_anchors[:2])[:1500]
+                        else:
+                            excerpt = extract[:1200]
+
+                    pub_date_str = explicit_dates[0] if explicit_dates else ""
+                    item = {
+                        "title": f"Wikipedia: {title}",
+                        "link": page_url,
+                        "source": "Wikipedia",
+                        "publisher_site": "https://en.wikipedia.org",
+                        "source_tier": "reference",
+                        "pub_date": pub_date_str,
+                        "_datetime": self._parse_pub_date(pub_date_str),
+                        "retrieval_pool": pool,
+                        "query": f"wikipedia:{title}",
+                        "excerpt": excerpt.strip(),
+                        "fetch_status": "full_text",
+                    }
+                    item["coverage"] = self._coverage_score(item, claim_analysis.get("must_have_terms", []))
+                    item["score"] = self._rank_candidate(item, claim_analysis)
+
+                    if item["coverage"] > 0 or not claim_analysis.get("must_have_terms"):
+                        wiki_candidates.append(item)
+                        wiki_log["items_kept"] += 1
+            except Exception as exc:
+                logger.debug("Wikipedia extract fetch failed for %r: %s", title, exc)
+
+        return wiki_candidates, wiki_log
+
     def scrape_news(
         self,
         planned_queries: List[Dict[str, Any]],
@@ -216,8 +363,11 @@ class NewsScraperAgent:
         candidates: Dict[str, Dict[str, Any]] = {}  # canonical_key -> article
         retrieval_incomplete = False
 
-        with ThreadPoolExecutor(max_workers=min(5, max(1, len(planned_queries)))) as executor:
+        max_workers = min(6, max(1, len(planned_queries) + 1))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(self._fetch_rss_items, query): query for query in planned_queries}
+            wiki_future = executor.submit(self._fetch_wikipedia_candidates, claim_analysis)
+
             for future in as_completed(futures):
                 query = futures[future]
                 log: Dict[str, Any] = {
@@ -278,6 +428,18 @@ class NewsScraperAgent:
                     logger.warning("RSS future failed for %r: %s", query.get("q", ""), exc)
 
                 query_logs.append(log)
+
+            # Integrate Wikipedia fallback candidates
+            try:
+                wiki_items, wiki_log = wiki_future.result(timeout=min(6, RSS_REQUEST_TIMEOUT + 2))
+                query_logs.append(wiki_log)
+                for item in wiki_items:
+                    canonical_key = re.sub(r"\W+", " ", item.get("title", "").lower()).strip()
+                    if canonical_key in candidates:
+                        continue
+                    candidates[canonical_key] = item
+            except Exception as exc:
+                logger.debug("Wikipedia fallback processing error: %s", exc)
 
         # Pool separation and quota
         grouped: Dict[str, List[Dict[str, Any]]] = {"recent": [], "historical": []}

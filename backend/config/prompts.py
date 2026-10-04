@@ -62,7 +62,7 @@ FOLLOW THE JSON FIELD ORDER: article_assessments first, then propositions, tempo
 - stance (direct articles only): supports/contradicts requires an affirmative statement in the text. Silence, omission or a different edition is not contradiction. If you cannot quote supporting text verbatim, stance = neutral_context.
 - evidence_quote: copy exactly from title or excerpt. Never paraphrase or merge fragments.
 - event_date: take it from the article text. Resolve relative words ("yesterday", "on Sunday") from pub_date and mark inferred_from_pub_date. Never silently set event_date = pub_date.
-- source_tier is publisher metadata, not a judgement of this article. Opinion, liveblog/roundup, retrospective or headline-only text cannot be the sole basis for True or False.
+- source_tier is publisher metadata, not a judgement of this article. Opinion, liveblog/roundup, or headline-only text cannot be the sole basis for True or False. Reference tier (Wikipedia) articles provide encyclopedic documentation for historical/timeless events and may support or contradict factual claims, but can never be the sole basis for High confidence (capped at Medium because community wikis are openly editable).
 - Wire copy republished by several outlets is one source.
 
 2. TIME LOGIC (use claim_analysis.time_reference; correct it only if obviously wrong)
