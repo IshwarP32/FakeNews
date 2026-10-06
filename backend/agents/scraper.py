@@ -161,11 +161,36 @@ class NewsScraperAgent:
         logger.warning("RSS fetch failed after %d attempts for %r: %s", max_retries, planned_query.get("q", ""), last_exc)
         return "", [], "failed"
 
+    @staticmethod
+    def _matches_group(text_lower: str, group: List[str]) -> bool:
+        generic_words = {
+            "event", "events", "meet", "meets", "the", "of", "in", "at", "for", "and", "or", "a", "an", "to",
+            "news", "article", "report", "results", "winner", "winners", "championship",
+        }
+        for alias in group:
+            a_lower = alias.lower().strip()
+            if not a_lower:
+                continue
+            # 1. Exact substring match
+            if a_lower in text_lower:
+                return True
+            # 2. Content tokens (ignoring generic words)
+            tokens = [w for w in re.findall(r"\b\w+\b", a_lower) if w not in generic_words and len(w) > 2]
+            if len(tokens) >= 2 and all(re.search(r"\b" + re.escape(tok) + r"\b", text_lower) for tok in tokens):
+                return True
+            # 3. Multi-word distinctive prefix / bigram (e.g. 'inter iit' from 'Inter IIT Sports event')
+            words = [w for w in re.findall(r"\b\w+\b", a_lower) if w not in generic_words]
+            if len(words) >= 2:
+                bigram = f"{words[0]} {words[1]}"
+                if re.search(r"\b" + re.escape(bigram) + r"\b", text_lower):
+                    return True
+        return False
+
     def _coverage_score(self, article: Dict[str, Any], must_have_terms: List[List[str]]) -> float:
         text = f"{article.get('title', '')} {article.get('excerpt', '')}".lower()
         if not must_have_terms:
             return 1.0
-        covered = sum(1 for group in must_have_terms if any(alias.lower() in text for alias in group))
+        covered = sum(1 for group in must_have_terms if self._matches_group(text, group))
         return covered / len(must_have_terms)
 
     def _rank_candidate(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> float:
@@ -186,6 +211,9 @@ class NewsScraperAgent:
 
     def _fetch_article_excerpt(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> None:
         """Replace a weak RSS snippet with a bounded extracted passage when possible."""
+        # Never overwrite Wikipedia reference extracts which are already extracted and curated
+        if article.get("source") == "Wikipedia" or article.get("fetch_status") == "full_text":
+            return
         if trafilatura is None or not article.get("link"):
             return
         url = article["link"]
@@ -205,6 +233,28 @@ class NewsScraperAgent:
             article["fetch_status"] = "full_text"
         except Exception as exc:
             logger.debug("Article extraction failed for %s: %s", article.get("link"), exc)
+
+    def _resolve_wikipedia_title(self, session: Any, query: str, timeout: int = 5) -> Optional[str]:
+        """Use Wikipedia opensearch to resolve a query to a canonical article title."""
+        try:
+            resp = session.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "opensearch",
+                    "search": query,
+                    "limit": "3",
+                    "namespace": "0",
+                    "format": "json",
+                },
+                timeout=timeout,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data and len(data) > 1 and data[1]:
+                    return data[1][0]  # First match title
+        except Exception as exc:
+            logger.debug("Wikipedia opensearch failed for %r: %s", query, exc)
+        return None
 
     def _fetch_wikipedia_candidates(self, claim_analysis: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Fetch encyclopedic reference fallback articles from Wikipedia MediaWiki API.
@@ -234,26 +284,58 @@ class NewsScraperAgent:
         is_historical = time_ref in ("explicit_date", "timeless_historical", "historical") or bool(explicit_dates)
         pool = "historical" if is_historical else "recent"
 
-        search_queries: List[str] = []
-        if entities:
-            if len(entities) >= 2:
-                search_queries.append(f'"{entities[0]}" "{entities[1]}"')
-            for ent in reversed(entities):
-                if explicit_dates:
-                    search_queries.append(f'"{ent}" {explicit_dates[0]}')
-                search_queries.append(f'"{ent}"')
-        else:
-            norm_claim = claim_analysis.get("normalized_claim", "")
-            if norm_claim:
-                search_queries.append(norm_claim)
+        must_have_terms = claim_analysis.get("must_have_terms", [])
+        must_have_aliases = [alias.lower() for g in must_have_terms for alias in g]
+        target_anchors = [d.lower() for d in explicit_dates] + must_have_aliases
+
+        all_aliases_per_group: List[List[str]] = [
+            [a for a in g if a] for g in must_have_terms
+        ]
 
         session = requests.Session()
         session.headers.update({
             "User-Agent": "FakeNewsVerifier/2.0 (research; educational; contact: ishwarpatil8767@gmail.com)"
         })
 
-        found_titles: List[str] = []
-        for q in search_queries[:4]:
+        search_queries: List[str] = []
+
+        # Priority 1: Unquoted alias + date (e.g. 'Inter IIT Sports event 2014')
+        if explicit_dates:
+            for group in all_aliases_per_group:
+                for alias in group[:2]:
+                    if len(alias.split()) >= 2:
+                        search_queries.append(f"{alias} {explicit_dates[0]}")
+            if len(entities) >= 2:
+                search_queries.append(f"{entities[0]} {entities[1]} {explicit_dates[0]}")
+
+        # Priority 2: Normalized claim text
+        norm_claim = claim_analysis.get("normalized_claim", "")
+        if norm_claim:
+            search_queries.append(norm_claim)
+
+        # Priority 3: Pairwise combinations across alias groups
+        if len(all_aliases_per_group) >= 2:
+            for alias_a in all_aliases_per_group[0][:2]:
+                for alias_b in all_aliases_per_group[1][:2]:
+                    search_queries.append(f'"{alias_a}" "{alias_b}"')
+
+        # Priority 4: Individual aliases and entity names
+        for group in all_aliases_per_group:
+            for alias in group[:2]:
+                if explicit_dates:
+                    search_queries.append(f'"{alias}" {explicit_dates[0]}')
+                search_queries.append(f'"{alias}"')
+
+        seen_q: set = set()
+        unique_queries: List[str] = []
+        for q in search_queries:
+            if q not in seen_q:
+                seen_q.add(q)
+                unique_queries.append(q)
+
+        title_scores: Dict[str, float] = {}
+
+        for q in unique_queries[:6]:
             try:
                 resp = session.get(
                     "https://en.wikipedia.org/w/api.php",
@@ -263,28 +345,40 @@ class NewsScraperAgent:
                         "srsearch": q,
                         "format": "json",
                         "utf8": "1",
-                        "srlimit": "2",
+                        "srlimit": "4",
                     },
                     timeout=5,
                 )
                 if resp.status_code == 200:
-                    for item in resp.json().get("query", {}).get("search", []):
+                    results = resp.json().get("query", {}).get("search", [])
+                    for rank, item in enumerate(results):
                         t = item.get("title")
-                        if t and t not in found_titles:
-                            found_titles.append(t)
+                        if not t:
+                            continue
+                        rank_score = max(1, 4 - rank)
+                        title_lower = t.lower()
+                        snippet_lower = (item.get("snippet") or "").lower()
+                        combined = f"{title_lower} {snippet_lower}"
+                        anchor_hits = sum(1 for a in target_anchors if a in combined)
+                        token_bonus = sum(2 for g in must_have_terms if self._matches_group(title_lower, g))
+                        total_score = rank_score + (anchor_hits * 2) + token_bonus
+
+                        if t not in title_scores or total_score > title_scores[t]:
+                            title_scores[t] = total_score
             except Exception as exc:
                 logger.debug("Wikipedia search query %r failed: %s", q, exc)
 
-        wiki_log["items_returned"] = len(found_titles)
-        if not found_titles:
+        wiki_log["items_returned"] = len(title_scores)
+        if not title_scores:
             wiki_log["status"] = "empty"
             return [], wiki_log
 
-        wiki_candidates: List[Dict[str, Any]] = []
-        must_have_aliases = [alias.lower() for g in claim_analysis.get("must_have_terms", []) for alias in g]
-        target_anchors = [d.lower() for d in explicit_dates] + must_have_aliases
+        sorted_titles = sorted(title_scores.items(), key=lambda kv: kv[1], reverse=True)
+        titles_to_fetch = [t for t, _ in sorted_titles[:5]]
 
-        for title in found_titles[:2]:
+        wiki_candidates: List[Dict[str, Any]] = []
+
+        for title in titles_to_fetch:
             try:
                 resp = session.get(
                     "https://en.wikipedia.org/w/api.php",
@@ -306,25 +400,36 @@ class NewsScraperAgent:
                     extract = (p.get("extract") or "").strip()
                     if not extract:
                         continue
-                    page_url = p.get("fullurl") or f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+                    page_url = (
+                        p.get("fullurl")
+                        or f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+                    )
 
+                    # Split on double newlines to keep headers and associated section bodies together
                     paragraphs = [para.strip() for para in extract.split("\n\n") if para.strip()]
+
+                    # Tier 1: paragraphs matching BOTH date AND any entity group
                     best_paras = []
                     for para in paragraphs:
                         para_lower = para.lower()
                         has_date = any(d.lower() in para_lower for d in explicit_dates) if explicit_dates else True
-                        has_entity = any(alias.lower() in para_lower for alias in must_have_aliases) if must_have_aliases else True
+                        has_entity = any(self._matches_group(para_lower, g) for g in must_have_terms) if must_have_terms else True
                         if has_date and has_entity:
                             best_paras.append(para)
 
                     if best_paras:
-                        excerpt = "\n\n".join(best_paras)[:1500]
+                        excerpt = "\n\n".join(best_paras)[:2500]
                     else:
-                        para_anchors = [para for para in paragraphs if any(a in para.lower() for a in target_anchors)]
+                        # Tier 2: paragraphs matching any entity group
+                        para_anchors = [
+                            para for para in paragraphs
+                            if any(self._matches_group(para.lower(), g) for g in must_have_terms)
+                        ]
                         if para_anchors:
-                            excerpt = "\n\n".join(para_anchors[:2])[:1500]
+                            excerpt = "\n\n".join(para_anchors[:3])[:2000]
                         else:
-                            excerpt = extract[:1200]
+                            # Tier 3: beginning of article as last resort
+                            excerpt = extract[:1500]
 
                     pub_date_str = explicit_dates[0] if explicit_dates else ""
                     item = {
@@ -340,16 +445,22 @@ class NewsScraperAgent:
                         "excerpt": excerpt.strip(),
                         "fetch_status": "full_text",
                     }
-                    item["coverage"] = self._coverage_score(item, claim_analysis.get("must_have_terms", []))
+                    item["coverage"] = self._coverage_score(item, must_have_terms)
                     item["score"] = self._rank_candidate(item, claim_analysis)
 
-                    if item["coverage"] > 0 or not claim_analysis.get("must_have_terms"):
+                    # Apply full-coverage gate:
+                    # require all must_have groups to be matched when 2+ groups exist
+                    required_wiki_coverage = 1.0 if len(must_have_terms) >= 2 else 0.5
+                    if item["coverage"] >= required_wiki_coverage or not must_have_terms:
                         wiki_candidates.append(item)
                         wiki_log["items_kept"] += 1
             except Exception as exc:
                 logger.debug("Wikipedia extract fetch failed for %r: %s", title, exc)
 
+        # Sort so the highest-scoring Wikipedia article appears first
+        wiki_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
         return wiki_candidates, wiki_log
+
 
     def scrape_news(
         self,
@@ -413,9 +524,15 @@ class NewsScraperAgent:
                         item["score"] = self._rank_candidate(item, claim_analysis)
                         item["fetch_status"] = "snippet_only"  # default; full_text set by _fetch_article_excerpt
 
-                        # Drop articles with 0 must_have_terms coverage (irrelevant at retrieval time)
-                        if item["coverage"] <= 0 and claim_analysis.get("must_have_terms"):
-                            continue
+                        # Drop articles that don't cover ALL must_have_terms groups.
+                        # Requiring full coverage (1.0) when there are 2+ groups prevents
+                        # irrelevant articles (e.g. IIT Kanpur supercomputer news) from
+                        # passing just because they match one entity.
+                        must_have = claim_analysis.get("must_have_terms", [])
+                        if must_have:
+                            required_coverage = 1.0 if len(must_have) >= 2 else 0.5
+                            if item["coverage"] < required_coverage:
+                                continue
 
                         candidates[canonical_key] = item
                         log["items_kept"] += 1
@@ -441,6 +558,17 @@ class NewsScraperAgent:
                     candidates[canonical_key] = item
             except Exception as exc:
                 logger.warning("Wikipedia fallback processing error: %s", exc)
+                query_logs.append({
+                    "query": {"q": "wikipedia:reference_fallback", "role": "historical"},
+                    "items_returned": 0,
+                    "items_kept": 0,
+                    "domains": ["wikipedia.org"],
+                    "error": str(exc),
+                    "status": "failed",
+                    "rss_url": "https://en.wikipedia.org/w/api.php",
+                    "role": "historical",
+                    "window_source": "wikipedia_fallback",
+                })
 
         # Pool separation and quota
         grouped: Dict[str, List[Dict[str, Any]]] = {"recent": [], "historical": []}
