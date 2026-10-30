@@ -8,7 +8,7 @@
 - **Current stage:** Reorganized Full-stack Application (`backend/` + `frontend/`) & Multi-Agent Verification System
 - **Last updated:** 2026-10-04
 
-- **Source document:** `docs/verification_methodology.md`, `docs/source_credibility.md`
+- **Source document:** `docs/PROJECT_GUIDE.md`
 - **Current workspace:** Contains the agentic verification service under `backend/` and the modular React frontend under `frontend/`.
 
 
@@ -115,7 +115,7 @@ FakeNews/
 
 - Redesigned the frontend as a dark slate/indigo intelligence console with dense input, pipeline, verdict, probability, evidence, and source surfaces.
 - Added `VITE_API_URL` support for Vercel-to-Render API calls and configurable `CORS_ORIGINS` for production.
-- Added `render.yaml` and `docs/deployment.md` covering Render and Vercel deployment.
+- Added `render.yaml` and consolidated project documentation in `docs/PROJECT_GUIDE.md`.
 
 ### 2026-09-28 - VeriScan AI Interface Refinement
 

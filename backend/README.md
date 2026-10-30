@@ -48,7 +48,7 @@ Responses use `schema_version: "2.0"` and contain the validated `verdict`, separ
 
 ## Deployment
 
-See [`docs/AUDIT.md`](../docs/AUDIT.md) for the failure-mode audit and [`docs/deployment.md`](../docs/deployment.md) for Render/Vercel setup.
+See [`docs/PROJECT_GUIDE.md`](../docs/PROJECT_GUIDE.md) for the architecture, failure modes, evaluation results, deployment context, and presentation guide.
 
 Run deterministic evidence validation fixtures with:
 
