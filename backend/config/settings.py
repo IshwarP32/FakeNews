@@ -37,6 +37,9 @@ MAX_RSS_REQUESTS = int(os.getenv("MAX_RSS_REQUESTS", "10"))
 
 # Per-verification wall-clock budget in seconds
 VERIFICATION_TIMEOUT_S = int(os.getenv("VERIFICATION_TIMEOUT_S", "90"))
+# Per-request Gemini HTTP timeout in milliseconds. Keep below the pipeline
+# budget so a single provider call cannot hold the request indefinitely.
+GEMINI_HTTP_TIMEOUT_MS = int(os.getenv("GEMINI_HTTP_TIMEOUT_MS", "30000"))
 
 # ---------------------------------------------------------
 # AI & Pipeline Parameters

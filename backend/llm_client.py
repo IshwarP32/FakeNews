@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
+from backend.config.settings import GEMINI_HTTP_TIMEOUT_MS
 
 logger = logging.getLogger("fake_news_verifier")
 
@@ -197,7 +198,10 @@ class LLMClient:
     """Central Gemini API client with error classification and fallback logic."""
 
     def __init__(self, api_key: Optional[str] = None):
-        self._client = genai.Client(api_key=api_key or os.getenv("GEMINI_API_KEY"))
+        self._client = genai.Client(
+            api_key=api_key or os.getenv("GEMINI_API_KEY"),
+            http_options=types.HttpOptions(timeout=GEMINI_HTTP_TIMEOUT_MS),
+        )
         self._cooldowns: Dict[str, _CooldownEntry] = {}
         self._short_cooldown_s = 65   # per-minute quota
         self._long_cooldown_s = 3700  # per-day quota
@@ -288,6 +292,8 @@ class LLMClient:
 
             for attempt in range(2):  # max 2 attempts per model
                 try:
+                    if wall_clock_deadline and time.monotonic() >= wall_clock_deadline:
+                        raise TimeoutError("wall-clock budget exceeded before Gemini request")
                     gen_config = self._build_generation_config(
                         model_name=model,
                         system_instruction=system_instruction,
@@ -328,6 +334,22 @@ class LLMClient:
                         break  # next model
 
                     elif err_class in (EC_TRANSIENT, EC_UNKNOWN):
+                        # A request timeout has already consumed the provider
+                        # request budget. Retrying the same model delays the
+                        # configured fallback chain, so advance immediately.
+                        is_timeout = (
+                            isinstance(exc, TimeoutError)
+                            or "timeout" in str(exc).lower()
+                            or "timed out" in str(exc).lower()
+                        )
+                        if is_timeout:
+                            next_model = available[available.index(model) + 1] if model != available[-1] else None
+                            logger.info(
+                                "LLMClient: timeout on %s; falling back to %s",
+                                model,
+                                next_model or "no remaining model",
+                            )
+                            break
                         if attempt == 0:
                             sleep_t = (2 ** attempt) + random.uniform(0, 1)
                             logger.info("LLMClient: transient retry in %.1fs on %s", sleep_t, model)

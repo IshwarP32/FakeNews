@@ -54,6 +54,7 @@ class QueryPlannerAgent:
         on_progress: Optional[ProgressCallback] = None,
         today: Optional[date] = None,
         max_rss_requests: int = 10,
+        wall_clock_deadline: Optional[float] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         report(on_progress, "query_planning", "Agent 1 (Query Planner): Generating search queries...")
         logger.info("Agent 1: Planning search queries...")
@@ -85,6 +86,7 @@ class QueryPlannerAgent:
                 system_instruction=QUERY_PLANNER_SYSTEM_INSTRUCTION,
                 response_schema=QueryPlan,
                 thinking_level="low",
+                wall_clock_deadline=wall_clock_deadline,
             )
             raw_response_text = getattr(resp, "text", "") or ""
             cleaned_text = raw_response_text.replace("```json", "").replace("```", "").strip()

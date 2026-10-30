@@ -94,6 +94,7 @@ class GeminiVerifier:
                 models=PLANNER_MODELS,
                 on_progress=on_progress,
                 max_rss_requests=MAX_RSS_REQUESTS,
+                wall_clock_deadline=wall_clock_deadline,
             )
             trace["planner_log"] = planner_log
         except Exception as exc:

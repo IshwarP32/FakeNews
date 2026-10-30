@@ -1,5 +1,8 @@
 import React from 'react';
 import { AlertOctagon, AlertTriangle, CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
+import ClaimBreakdown from './ClaimBreakdown';
+import CoverageOverview from './CoverageOverview';
+import EvidenceTimeline from './EvidenceTimeline';
 
 const verdictStyles = {
   True: { icon: CheckCircle2, label: 'Verified True', tone: 'true' },
@@ -80,6 +83,13 @@ export default function AnalysisResult({ result }) {
           <p>{verdict.summary}</p>
         </div>
       )}
+      <ClaimBreakdown propositions={verdict.propositions} />
+      <CoverageOverview coverage={result.coverage} />
+      <EvidenceTimeline
+        evidenceSources={result.evidence_articles}
+        contextSources={result.context_articles}
+        historicalContext={verdict.historical_context}
+      />
       {verdict.date_analysis && (
         <div className="notice-block">
           <h3>DATE / FRESHNESS CHECK</h3>
