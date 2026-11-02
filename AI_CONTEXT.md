@@ -60,7 +60,7 @@ FakeNews/
 ├── frontend/                  # React + Vite user interface
 │   ├── src/
 │   │   ├── assets/
-│   │   ├── components/        # AnalysisForm, AnalysisResult, SourceList, etc.
+│   │   ├── components/        # AnalysisForm, AnalysisResult, InvestigationScope, etc.
 │   │   ├── context/           # AnalysisContext state & reload persistence
 │   │   ├── pages/             # Home page
 │   │   ├── services/          # API fetch service
@@ -121,3 +121,16 @@ FakeNews/
 
 - Refined the frontend branding to `VeriScan AI` with the requested real-time verification hero, quick test samples, live three-agent execution timeline, and 12-column 7/5 analysis layout.
 - Moved scraped evidence outlets into a full-width three-column grid with publisher, headline, URL, and external-link affordance.
+
+### 2026-11-02 - Frontend Restructure, Modern Warm Obsidian Palette & Dual Metrics
+
+- **Full Frontend Layout Restructure**:
+  - Top row: 2-column balanced grid with a single claim input field on the left and live agent execution pipeline on the right. Quick test samples banner removed.
+  - Bottom row: Full-width space dedicated entirely to the verification intelligence result (`AnalysisResult`).
+  - Top right: Added a sleek `(i)` button that opens a popup modal with the comprehensive Verification Methodology and System Architecture Guide.
+- **Modern Dark Color Palette**:
+  - Implemented the requested luxury warm dark aesthetic: `#0a0908` (Obsidian background), `#22333b` / `#141d22` (Charcoal Slate surfaces), `#eae0d5` (Warm Ivory primary text), `#c6ac8f` (Champagne Gold accents), and `#5e503f` (Warm Bronze borders).
+- **Dual Retrieval Metrics (`X kept · Y to LLM`)**:
+  - `verifier.py` and `verification.py` schema updated with `passed_to_llm` on each `CoverageWindow` and returning `analyzed_articles`.
+  - In front of every query, users now see both how many articles were kept from the query by the scraper and how many were passed to the LLM analyzer (e.g. `1 kept · 0 to LLM` or `46 kept · 6 to LLM`).
+  - Drill-down accordion rows display all analyzed articles with hyperlinked cards, external link affordance, and clear explanations when candidate articles were prioritized out before LLM analysis.

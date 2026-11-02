@@ -140,6 +140,9 @@ class CoverageWindow(BaseModel):
     error: Optional[str] = None
     rss_url: Optional[str] = None
     ladder_rung: Optional[str] = None
+    query_text: str = ""
+    site_hint: Optional[str] = None
+    passed_to_llm: int = 0
 
 
 class CoverageDateRange(BaseModel):
@@ -186,4 +189,5 @@ class VerificationResult(BaseModel):
     verdict: EvidenceAnalysis
     evidence_articles: list[dict[str, object]] = Field(default_factory=list)
     context_articles: list[dict[str, object]] = Field(default_factory=list)
+    analyzed_articles: list[dict[str, object]] = Field(default_factory=list)
     coverage: Coverage = Field(default_factory=Coverage)

@@ -210,13 +210,12 @@ class GeminiVerifier:
         article_by_id = {article.get("id"): article for article in articles}
         evidence_articles: List[Dict[str, Any]] = []
         context_articles: List[Dict[str, Any]] = []
+        analyzed_articles: List[Dict[str, Any]] = []
 
         for assessment in result.get("article_assessments", []):
             article = article_by_id.get(assessment.get("id"))
             if not article:
                 continue
-            if assessment.get("relevance") == "irrelevant":
-                continue  # Never return irrelevant articles to frontend
             article_view = {
                 **article,
                 "relevance": assessment.get("relevance"),
@@ -227,6 +226,7 @@ class GeminiVerifier:
                 "near_miss_entity": assessment.get("near_miss_entity"),
                 "applies_to_reading": assessment.get("applies_to_reading", "neither"),
             }
+            analyzed_articles.append(article_view)
             if assessment.get("relevance") == "direct" and assessment.get("stance") in {"supports", "contradicts"}:
                 evidence_articles.append(article_view)
             elif assessment.get("relevance") == "contextual" or (
@@ -259,7 +259,7 @@ class GeminiVerifier:
         pub_dates = sorted(a.get("pub_date", "") for a in articles if a.get("pub_date"))
 
         coverage = {
-            "queries_run": len(queries),
+            "queries_run": len(query_logs),
             "windows": [
                 {
                     "role": log.get("role", ""),
@@ -268,9 +268,19 @@ class GeminiVerifier:
                     "status": log.get("status", "ok"),
                     "items_returned": log.get("items_returned", 0),
                     "items_kept": log.get("items_kept", 0),
+                    "passed_to_llm": sum(
+                        1 for a in articles 
+                        if (
+                            (a.get("query") or "").startswith("wikipedia:") 
+                            if (log.get("query", {}).get("q", "") or "").startswith("wikipedia:")
+                            else a.get("query") == log.get("query", {}).get("q", "")
+                        )
+                    ),
                     "error": log.get("error"),
                     "rss_url": log.get("rss_url", ""),
                     "purpose": log.get("query", {}).get("purpose", ""),
+                    "query_text": log.get("query", {}).get("q", ""),
+                    "site_hint": log.get("query", {}).get("site_hint"),
                 }
                 for log in query_logs
             ],
@@ -339,6 +349,7 @@ class GeminiVerifier:
             "verdict": result,
             "evidence_articles": evidence_articles,
             "context_articles": context_articles,
+            "analyzed_articles": analyzed_articles,
             "coverage": coverage,
         }
 
@@ -363,5 +374,6 @@ class GeminiVerifier:
             "verdict": None,
             "evidence_articles": [],
             "context_articles": [],
+            "analyzed_articles": [],
             "coverage": {},
         }

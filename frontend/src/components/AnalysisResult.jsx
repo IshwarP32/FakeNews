@@ -1,8 +1,8 @@
 import React from 'react';
 import { AlertOctagon, AlertTriangle, CheckCircle2, CircleHelp, XCircle } from 'lucide-react';
 import ClaimBreakdown from './ClaimBreakdown';
-import CoverageOverview from './CoverageOverview';
 import EvidenceTimeline from './EvidenceTimeline';
+import InvestigationScope from './InvestigationScope';
 
 const verdictStyles = {
   True: { icon: CheckCircle2, label: 'Verified True', tone: 'true' },
@@ -72,24 +72,26 @@ export default function AnalysisResult({ result }) {
         </div>
       )}
 
-      {result.coverage && (
-        <p className="coverage-line">
-          Checked {result.coverage.articles_analysed || 0} analysed articles from {result.coverage.independent_sources || 0} independent sources.
-        </p>
-      )}
-      {verdict.summary && (
-        <div className="content-block">
-          <h3>EXECUTIVE SUMMARY</h3>
-          <p>{verdict.summary}</p>
+      {/* 2-Column Middle Grid: Summary & Claim Breakdown on Left, Event Timeline on Right */}
+      <div className="result-middle-grid">
+        <div className="result-left-column">
+          {verdict.summary && (
+            <div className="content-block summary-block">
+              <h3>EXECUTIVE SUMMARY</h3>
+              <p>{verdict.summary}</p>
+            </div>
+          )}
+          <ClaimBreakdown propositions={verdict.propositions} />
         </div>
-      )}
-      <ClaimBreakdown propositions={verdict.propositions} />
-      <CoverageOverview coverage={result.coverage} />
-      <EvidenceTimeline
-        evidenceSources={result.evidence_articles}
-        contextSources={result.context_articles}
-        historicalContext={verdict.historical_context}
-      />
+
+        <div className="result-right-column">
+          <EvidenceTimeline
+            evidenceSources={result.evidence_articles}
+            contextSources={result.context_articles}
+            historicalContext={verdict.historical_context}
+          />
+        </div>
+      </div>
       {verdict.date_analysis && (
         <div className="notice-block">
           <h3>DATE / FRESHNESS CHECK</h3>
@@ -118,6 +120,13 @@ export default function AnalysisResult({ result }) {
           <p>{verdict.limitations}</p>
         </div>
       )}
+      {/* Scope and Queries Section at the last of result */}
+      <InvestigationScope
+        coverage={result.coverage}
+        evidenceArticles={result.evidence_articles}
+        contextArticles={result.context_articles}
+        analyzedArticles={result.analyzed_articles}
+      />
     </div>
   );
 }

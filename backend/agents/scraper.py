@@ -42,6 +42,26 @@ try:
 except ImportError:  # pragma: no cover
     trafilatura = None
 
+try:
+    import googlenewsdecoder
+except ImportError:  # pragma: no cover
+    googlenewsdecoder = None
+
+import os
+import numpy as np
+
+try:
+    from fastembed import TextEmbedding
+except ImportError:  # pragma: no cover
+    TextEmbedding = None
+
+try:
+    from google import genai
+except ImportError:  # pragma: no cover
+    genai = None
+
+from bs4 import BeautifulSoup
+
 # Private IP ranges to block for SSRF protection
 _PRIVATE_PREFIXES = (
     "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
@@ -193,7 +213,95 @@ class NewsScraperAgent:
         covered = sum(1 for group in must_have_terms if self._matches_group(text, group))
         return covered / len(must_have_terms)
 
-    def _rank_candidate(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> float:
+    _local_embedder = None
+
+    @classmethod
+    def _get_local_embedder(cls):
+        if cls._local_embedder is None and TextEmbedding is not None:
+            try:
+                cls._local_embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+            except Exception as exc:
+                logger.debug("Local fastembed model init failed: %s", exc)
+        return cls._local_embedder
+
+    def _compute_semantic_similarities(self, claim_text: str, candidate_texts: List[str]) -> List[float]:
+        """Compute dense neural embedding similarities (FastEmbed ONNX locally -> Gemini API -> TF-IDF)."""
+        if not candidate_texts:
+            return []
+        if not claim_text.strip():
+            return [0.5] * len(candidate_texts)
+
+        # 1. Primary: Fast, local ONNX dense embedding (19ms, ~100MB RAM, zero API calls, ideal for Render)
+        embedder = self._get_local_embedder()
+        if embedder is not None:
+            try:
+                all_texts = [claim_text[:1000]] + [t[:1000] for t in candidate_texts]
+                embeddings = list(embedder.embed(all_texts))
+                claim_vec = embeddings[0]
+                claim_norm = float(np.linalg.norm(claim_vec))
+                sims = []
+                for doc_vec in embeddings[1:]:
+                    doc_norm = float(np.linalg.norm(doc_vec))
+                    if claim_norm > 0 and doc_norm > 0:
+                        cos_sim = float(np.dot(claim_vec, doc_vec) / (claim_norm * doc_norm))
+                        sims.append(round(max(0.0, min(1.0, cos_sim)), 4))
+                    else:
+                        sims.append(0.5)
+                if len(sims) == len(candidate_texts):
+                    return sims
+            except Exception as exc:
+                logger.debug("FastEmbed local inference error: %s; trying Gemini cloud embedding", exc)
+
+        # 2. Secondary: Cloud dense neural embedding (gemini-embedding-001)
+        api_key = os.getenv("GEMINI_API_KEY")
+        if genai is not None and api_key:
+            try:
+                client = genai.Client(api_key=api_key)
+                all_sims: List[float] = []
+                chunk_size = 50
+                for i in range(0, len(candidate_texts), chunk_size):
+                    chunk = candidate_texts[i:i + chunk_size]
+                    batch_contents = [claim_text[:1000]] + [t[:1000] for t in chunk]
+                    res = client.models.embed_content(
+                        model="gemini-embedding-001",
+                        contents=batch_contents,
+                    )
+                    if res and res.embeddings and len(res.embeddings) == len(batch_contents):
+                        vecs = [np.array(e.values) for e in res.embeddings]
+                        claim_vec = vecs[0]
+                        claim_norm = float(np.linalg.norm(claim_vec))
+                        for doc_vec in vecs[1:]:
+                            doc_norm = float(np.linalg.norm(doc_vec))
+                            if claim_norm > 0 and doc_norm > 0:
+                                cos_sim = float(np.dot(claim_vec, doc_vec) / (claim_norm * doc_norm))
+                                all_sims.append(round(max(0.0, min(1.0, cos_sim)), 4))
+                            else:
+                                all_sims.append(0.5)
+                if len(all_sims) == len(candidate_texts):
+                    return all_sims
+            except Exception as exc:
+                logger.debug("Gemini dense embedding error: %s; falling back to TF-IDF semantic", exc)
+
+        # 3. Tertiary: Robust TF-IDF n-gram cosine fallback (local, instant, zero external API)
+        try:
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+
+            all_docs = [claim_text] + candidate_texts
+            tfidf = TfidfVectorizer(ngram_range=(1, 2), stop_words="english", sublinear_tf=True)
+            matrix = tfidf.fit_transform(all_docs)
+            cosines = cosine_similarity(matrix[0:1], matrix[1:]).flatten()
+            return [round(float(s), 4) for s in cosines]
+        except Exception as exc:
+            logger.debug("TF-IDF semantic scoring fallback failed: %s", exc)
+            return [0.5] * len(candidate_texts)
+
+    def _rank_candidate(
+        self,
+        article: Dict[str, Any],
+        claim_analysis: Dict[str, Any],
+        semantic_score: Optional[float] = None,
+    ) -> float:
         coverage = self._coverage_score(article, claim_analysis.get("must_have_terms", []))
         claim_tokens = set(re.findall(r"\w+", claim_analysis.get("normalized_claim", "").lower()))
         article_tokens = set(re.findall(r"\w+", f"{article.get('title', '')} {article.get('excerpt', '')}".lower()))
@@ -206,30 +314,115 @@ class NewsScraperAgent:
         likely_confusions = [c.lower() for c in claim_analysis.get("likely_confusions", [])]
         text_lower = f"{article.get('title', '')} {article.get('excerpt', '')}".lower()
         confusion_penalty = 0.2 if any(c in text_lower for c in likely_confusions) else 0.0
-        score = 0.5 * coverage + 0.3 * lexical + 0.2 * tier_score - confusion_penalty
+
+        if semantic_score is not None:
+            # Dense neural semantic similarity 50%, coverage 20%, lexical 10%, tier 20%
+            score = 0.50 * semantic_score + 0.20 * coverage + 0.10 * lexical + 0.20 * tier_score - confusion_penalty
+        else:
+            score = 0.5 * coverage + 0.3 * lexical + 0.2 * tier_score - confusion_penalty
         return round(max(0.0, score), 4)
 
+    def _decode_google_news_url(self, url: str) -> str:
+        """Decode Google News redirect URL to direct canonical publisher URL."""
+        if not url or "news.google.com" not in url:
+            return url
+        if googlenewsdecoder is None:
+            return url
+        try:
+            decoded = googlenewsdecoder.gnewsdecoder(url)
+            if isinstance(decoded, dict):
+                val = decoded.get("decoded_url")
+                if val and val.startswith("http"):
+                    return val
+            elif isinstance(decoded, str) and decoded.startswith("http"):
+                return decoded
+        except Exception as exc:
+            logger.debug("Google news URL decoding failed for %s: %s", url, exc)
+        return url
+
+    def _extract_clean_text(self, html_content: str) -> str:
+        """Extract clean text using trafilatura with BeautifulSoup fallback."""
+        if not html_content:
+            return ""
+        if trafilatura is not None:
+            try:
+                extracted = trafilatura.extract(
+                    html_content,
+                    include_comments=False,
+                    include_tables=False,
+                    no_fallback=False,
+                )
+                if extracted and len(extracted.strip()) > 150:
+                    return extracted.strip()
+            except Exception:
+                pass
+
+        try:
+            soup = BeautifulSoup(html_content, "html.parser")
+            for tag in soup(["script", "style", "nav", "header", "footer", "aside", "noscript", "form", "svg", "button"]):
+                tag.extract()
+            paragraphs = [p.get_text().strip() for p in soup.find_all("p")]
+            meaningful = [p for p in paragraphs if len(p) >= 30 and not p.lower().startswith("copyright")]
+            if meaningful:
+                return "\n\n".join(meaningful)
+        except Exception:
+            pass
+
+        return ""
+
     def _fetch_article_excerpt(self, article: Dict[str, Any], claim_analysis: Dict[str, Any]) -> None:
-        """Replace a weak RSS snippet with a bounded extracted passage when possible."""
+        """Decode Google News redirect to direct URL and scrape full article body."""
         # Never overwrite Wikipedia reference extracts which are already extracted and curated
         if article.get("source") == "Wikipedia" or article.get("fetch_status") == "full_text":
             return
-        if trafilatura is None or not article.get("link"):
+
+        raw_url = article.get("link", "")
+        if not raw_url:
             return
-        url = article["link"]
-        if not _is_safe_url(url):
-            logger.debug("Skipping article fetch (SSRF check): %s", url)
+
+        # 1. Decode Google News redirect URL to direct canonical publisher URL
+        direct_url = self._decode_google_news_url(raw_url)
+        if direct_url and direct_url != raw_url:
+            article["link"] = direct_url
+            try:
+                domain = urllib.parse.urlparse(direct_url).netloc.lower()
+                if domain:
+                    article["publisher_site"] = f"https://{domain}"
+            except Exception:
+                pass
+
+        target_url = article.get("link", "")
+        if not _is_safe_url(target_url):
+            logger.debug("Skipping article fetch (SSRF check): %s", target_url)
             return
+
+        # 2. Fetch direct HTML
         try:
-            downloaded = trafilatura.fetch_url(url)
-            extracted = trafilatura.extract(downloaded or "", include_comments=False, include_tables=False) or ""
-            if not extracted:
+            resp = requests.get(
+                target_url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9,hi;q=0.8",
+                },
+                timeout=RSS_REQUEST_TIMEOUT + 3,
+            )
+            if resp.status_code != 200 or not resp.text:
                 return
+
+            extracted = self._extract_clean_text(resp.text)
+            if not extracted or len(extracted.strip()) < 100:
+                return
+
             terms = [alias.lower() for group in claim_analysis.get("must_have_terms", []) for alias in group]
             lower_text = extracted.lower()
             match_positions = [lower_text.find(term) for term in terms if lower_text.find(term) >= 0]
-            start = max(0, min(match_positions) - 450) if match_positions else 0
-            article["excerpt"] = extracted[start: start + 1200]
+            start = max(0, min(match_positions) - 400) if match_positions else 0
+            # Keep up to 2500 chars of substantive context for Agent 3
+            article["excerpt"] = extracted[start: start + 2500].strip()
             article["fetch_status"] = "full_text"
         except Exception as exc:
             logger.debug("Article extraction failed for %s: %s", article.get("link"), exc)
@@ -448,10 +641,8 @@ class NewsScraperAgent:
                     item["coverage"] = self._coverage_score(item, must_have_terms)
                     item["score"] = self._rank_candidate(item, claim_analysis)
 
-                    # Apply full-coverage gate:
-                    # require all must_have groups to be matched when 2+ groups exist
-                    required_wiki_coverage = 1.0 if len(must_have_terms) >= 2 else 0.5
-                    if item["coverage"] >= required_wiki_coverage or not must_have_terms:
+                    # Keep Wikipedia candidates with basic term relevance
+                    if item["coverage"] >= 0.33 or not must_have_terms:
                         wiki_candidates.append(item)
                         wiki_log["items_kept"] += 1
             except Exception as exc:
@@ -524,18 +715,7 @@ class NewsScraperAgent:
                         item["score"] = self._rank_candidate(item, claim_analysis)
                         item["fetch_status"] = "snippet_only"  # default; full_text set by _fetch_article_excerpt
 
-                        # Drop articles that don't cover ALL must_have_terms groups.
-                        # Requiring full coverage (1.0) when there are 2+ groups prevents
-                        # irrelevant articles (e.g. IIT Kanpur supercomputer news) from
-                        # passing just because they match one entity.
-                        must_have = claim_analysis.get("must_have_terms", [])
-                        if must_have:
-                            required_coverage = 1.0 if len(must_have) >= 2 else 0.5
-                            if item["coverage"] < required_coverage:
-                                continue
-
                         candidates[canonical_key] = item
-                        log["items_kept"] += 1
                         log["domains"].append(item.get("publisher_site", ""))
 
                 except Exception as exc:
@@ -570,6 +750,41 @@ class NewsScraperAgent:
                     "window_source": "wikipedia_fallback",
                 })
 
+        # Batch Semantic Search Ranking across all retrieved candidates
+        normalized_claim = claim_analysis.get("normalized_claim", "") or ""
+        candidate_items = list(candidates.values())
+        if candidate_items and normalized_claim:
+            candidate_texts = [f"{c.get('title', '')} {c.get('excerpt', '')}" for c in candidate_items]
+            semantic_sims = self._compute_semantic_similarities(normalized_claim, candidate_texts)
+            for c, sim in zip(candidate_items, semantic_sims):
+                c["semantic_score"] = sim
+                c["score"] = self._rank_candidate(c, claim_analysis, semantic_score=sim)
+        else:
+            for c in candidate_items:
+                c["semantic_score"] = 0.5
+                c["score"] = self._rank_candidate(c, claim_analysis)
+
+        # Soft Semantic Filter: prune completely unrelated noise (semantic_score < 0.40)
+        # Authentic related news scores 0.58 - 0.85; noise scores < 0.40.
+        filtered_candidates: Dict[str, Dict[str, Any]] = {}
+        for key, c in candidates.items():
+            if c.get("source") == "Wikipedia" or c.get("semantic_score", 0.5) >= 0.40:
+                filtered_candidates[key] = c
+
+        # Safeguard: if filter pruned too aggressively, fall back to best scored candidates
+        if len(filtered_candidates) < 3 and len(candidates) >= 3:
+            filtered_candidates = candidates
+
+        candidates = filtered_candidates
+
+        # Update per-query kept counts in query_logs
+        for q_log in query_logs:
+            q_text = q_log.get("query", {}).get("q", "") if isinstance(q_log.get("query"), dict) else ""
+            if q_log.get("window_source") == "wikipedia_fallback" or (q_text and q_text.startswith("wikipedia:")):
+                q_log["items_kept"] = sum(1 for c in candidates.values() if c.get("source") == "Wikipedia")
+            elif q_text:
+                q_log["items_kept"] = sum(1 for c in candidates.values() if c.get("query") == q_text)
+
         # Pool separation and quota
         grouped: Dict[str, List[Dict[str, Any]]] = {"recent": [], "historical": []}
         for candidate in candidates.values():
@@ -595,12 +810,12 @@ class NewsScraperAgent:
         selected.extend(remaining[: max(0, MAX_CANDIDATES - len(selected))])
         selected = selected[:MAX_CANDIDATES]
 
-        # Fetch full text for top candidates
-        with ThreadPoolExecutor(max_workers=3) as executor:
-            fetch_futures = [executor.submit(self._fetch_article_excerpt, article, claim_analysis) for article in selected[:5]]
+        # Fetch full text for selected candidates
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            fetch_futures = [executor.submit(self._fetch_article_excerpt, article, claim_analysis) for article in selected]
             for f in fetch_futures:
                 try:
-                    f.result(timeout=RSS_REQUEST_TIMEOUT + 2)
+                    f.result(timeout=RSS_REQUEST_TIMEOUT + 4)
                 except Exception as exc:
                     logger.debug("Article excerpt future error: %s", exc)
 

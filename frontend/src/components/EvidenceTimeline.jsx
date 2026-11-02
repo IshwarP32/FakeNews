@@ -28,6 +28,7 @@ export default function EvidenceTimeline({ evidenceSources = [], contextSources 
       title: article.title || 'Evidence article',
       detail: `${article.publisher_site || article.source || 'Unknown publisher'} · ${article.stance === 'contradicts' ? 'Contradicts claim' : article.stance === 'supports' ? 'Supports claim' : 'Context'}`,
       kind: article.stance === 'contradicts' ? 'contradicts' : article.stance === 'supports' ? 'supports' : 'context',
+      link: article.link || '',
     }));
   const events = [...historicalEvents, ...articleEvents]
     .filter((event) => event.date || event.title)
@@ -54,7 +55,19 @@ export default function EvidenceTimeline({ evidenceSources = [], contextSources 
             <div className="evidence-event-marker"><FileText size={13} /></div>
             <div className="evidence-event-body">
               <time>{formatDate(event.date)}</time>
-              <strong>{event.title}</strong>
+              {event.link ? (
+                <a
+                  href={event.link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="evidence-event-link"
+                  title="Open original article"
+                >
+                  <strong>{event.title}</strong>
+                </a>
+              ) : (
+                <strong>{event.title}</strong>
+              )}
               <span>{event.detail}</span>
             </div>
           </div>

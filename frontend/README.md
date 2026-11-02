@@ -9,11 +9,13 @@ frontend/
 ├── src/
 │   ├── assets/             # Static brand images & icons
 │   ├── components/         # Modular UI Components
+│   │   ├── AgentTimeline.jsx
 │   │   ├── AnalysisForm.jsx
 │   │   ├── AnalysisResult.jsx
-│   │   ├── SourceList.jsx
+│   │   ├── ErrorMessage.jsx
+│   │   ├── InvestigationScope.jsx
 │   │   ├── LoadingState.jsx
-│   │   └── ErrorMessage.jsx
+│   │   └── SystemGuideModal.jsx
 │   ├── context/            # Analysis state management & reload persistence
 │   │   └── AnalysisContext.jsx
 │   ├── pages/              # Main Application Page Layouts

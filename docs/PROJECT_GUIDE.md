@@ -377,7 +377,8 @@ The correct response to weak coverage is a transparent `Unverified` result and a
 | `frontend/src/components/AnalysisForm.jsx` | Claim input |
 | `frontend/src/components/AgentTimeline.jsx` | Live agent progress |
 | `frontend/src/components/AnalysisResult.jsx` | Verdict and result presentation |
-| `frontend/src/components/SourceList.jsx` | Evidence and context source rendering |
+| `frontend/src/components/InvestigationScope.jsx` | Drill-down queries, publication range, and nested evidence articles |
+| `frontend/src/components/SystemGuideModal.jsx` | Verification methodology and architecture modal popup |
 | `frontend/src/context/AnalysisContext.jsx` | Analysis state and session persistence |
 | `frontend/src/services/analysisApi.js` | Backend API client |
 

@@ -32,7 +32,7 @@ export default function AgentTimeline({ isAnalyzing, activeStep, result }) {
     <section className="timeline-card">
       <div className="timeline-title">
         <div>
-          <p className="eyebrow">03 / LIVE EXECUTION</p>
+          <p className="eyebrow">LIVE PIPELINE EXECUTION</p>
           <h2>Live Agent Execution Pipeline</h2>
         </div>
         <span
