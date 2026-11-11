@@ -20,7 +20,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from google import genai
 from google.genai import types
@@ -255,6 +255,110 @@ class LLMClient:
 
         return types.GenerateContentConfig(**config_dict)
 
+    def _execute_with_fallback(
+        self,
+        models: List[str],
+        call_fn: Callable[[str, str], Any],
+        operation: str = "generate",
+        wall_clock_deadline: Optional[float] = None,
+        initial_retry_context: str = "",
+        allow_content_retry: bool = False,
+    ) -> Tuple[Any, str]:
+        """Run a Gemini SDK operation across fallback models with retry and cooldown handling."""
+        available = [m for m in models if not self._is_on_cooldown(m)]
+        if not available:
+            cooled = [f"{m} (until {self._cooldowns[m].until.isoformat()})" for m in models]
+            raise RuntimeError(f"llm_quota_exhausted: all models on cooldown: {cooled}")
+
+        last_err: Optional[Exception] = None
+        config_failed_models: List[str] = []
+        retry_context = initial_retry_context
+
+        for model in available:
+            if wall_clock_deadline and time.monotonic() > wall_clock_deadline:
+                raise RuntimeError("llm_unavailable: wall-clock budget exceeded")
+
+            for attempt in range(2):  # max 2 attempts per model
+                try:
+                    if wall_clock_deadline and time.monotonic() >= wall_clock_deadline:
+                        raise TimeoutError("wall-clock budget exceeded before Gemini request")
+                    logger.info("LLMClient (%s): calling %s (attempt %d)", operation, model, attempt + 1)
+                    resp = call_fn(model, retry_context)
+                    return resp, model
+
+                except Exception as exc:
+                    last_err = exc
+                    err_class, retry_delay = _classify_error(exc)
+                    logger.warning(
+                        "LLMClient (%s): %s on model %s attempt %d: %s",
+                        operation, err_class, model, attempt + 1, exc,
+                    )
+
+                    if err_class == EC_CONFIG:
+                        config_failed_models.append(model)
+                        # CONFIG errors are deterministic; break inner loop to try next model
+                        # in case the error is model-specific.
+                        break
+
+                    elif err_class == EC_QUOTA:
+                        # Determine cooldown duration
+                        if retry_delay is not None and retry_delay <= 12:
+                            # Per-minute quota, wait once then retry
+                            if attempt == 0:
+                                logger.info("LLMClient: quota retry delay %ds on %s", retry_delay, model)
+                                time.sleep(retry_delay + 1)
+                                continue  # retry this model
+                        # Put on cooldown and move to next model
+                        cooldown_dur = (
+                            self._long_cooldown_s
+                            if (retry_delay is None or retry_delay > 60)
+                            else self._short_cooldown_s
+                        )
+                        self._set_cooldown(model, cooldown_dur, str(exc))
+                        break  # next model
+
+                    elif err_class in (EC_TRANSIENT, EC_UNKNOWN):
+                        # A request timeout has already consumed the provider
+                        # request budget. Retrying the same model delays the
+                        # configured fallback chain, so advance immediately.
+                        is_timeout = (
+                            isinstance(exc, TimeoutError)
+                            or "timeout" in str(exc).lower()
+                            or "timed out" in str(exc).lower()
+                        )
+                        if is_timeout:
+                            next_model = available[available.index(model) + 1] if model != available[-1] else None
+                            logger.info(
+                                "LLMClient (%s): timeout on %s; falling back to %s",
+                                operation,
+                                model,
+                                next_model or "no remaining model",
+                            )
+                            break
+                        if attempt == 0:
+                            sleep_t = (2 ** attempt) + random.uniform(0, 1)
+                            logger.info("LLMClient (%s): transient retry in %.1fs on %s", operation, sleep_t, model)
+                            time.sleep(sleep_t)
+                            continue  # retry same model
+                        break  # next model after 2 attempts
+
+                    elif err_class == EC_CONTENT:
+                        if allow_content_retry and attempt == 0:
+                            retry_context = f"Previous attempt failed with: {str(exc)[:200]}"
+                            continue
+                        break  # content errors don't benefit from more retries
+
+        # If all failures were CONFIG type (same on every model), fail fast with single message
+        if last_err and config_failed_models and len(config_failed_models) >= len(available):
+            raise RuntimeError(f"llm_config_error: {last_err}")
+
+        # All models exhausted
+        available_after = [m for m in models if not self._is_on_cooldown(m)]
+        if not available_after:
+            raise RuntimeError("llm_quota_exhausted: all models on cooldown after failures")
+
+        raise RuntimeError(f"llm_unavailable: all models failed. Last error: {last_err}")
+
     def generate(
         self,
         models: List[str],
@@ -276,105 +380,73 @@ class LLMClient:
           - llm_quota_exhausted: all models on cooldown
           - llm_unavailable: all models failed after retries
         """
-        available = [m for m in models if not self._is_on_cooldown(m)]
-        if not available:
-            cooled = [f"{m} (until {self._cooldowns[m].until.isoformat()})" for m in models]
-            raise RuntimeError(f"llm_quota_exhausted: all models on cooldown: {cooled}")
+        def _call(model: str, retry_context: str) -> Any:
+            current_prompt = prompt + (f"\n\n[Retry context: {retry_context}]" if retry_context else "")
+            gen_config = self._build_generation_config(
+                model_name=model,
+                system_instruction=system_instruction,
+                response_schema=response_schema,
+                thinking_level=thinking_level,
+                extra_config={"max_output_tokens": max_output_tokens},
+            )
+            return self._client.models.generate_content(
+                model=model,
+                contents=current_prompt,
+                config=gen_config,
+            )
 
-        last_err: Optional[Exception] = None
-        config_failed_models: List[str] = []
+        return self._execute_with_fallback(
+            models=models,
+            call_fn=_call,
+            operation="generate",
+            wall_clock_deadline=wall_clock_deadline,
+            initial_retry_context=retry_prompt_suffix,
+            allow_content_retry=True,
+        )
 
-        for model in available:
-            if wall_clock_deadline and time.monotonic() > wall_clock_deadline:
-                raise RuntimeError("llm_unavailable: wall-clock budget exceeded")
+    def embed(
+        self,
+        models: List[str],
+        contents: List[str],
+        wall_clock_deadline: Optional[float] = None,
+    ) -> Tuple[Any, str]:
+        """
+        Call Gemini embed_content across the embedding model fallback list.
 
-            current_prompt = prompt + (f"\n\n[Retry context: {retry_prompt_suffix}]" if retry_prompt_suffix else "")
+        Returns (response, model_used).
+        Raises RuntimeError with reason code on total failure.
+        """
+        if not contents:
+            raise ValueError("contents must be non-empty")
 
-            for attempt in range(2):  # max 2 attempts per model
-                try:
-                    if wall_clock_deadline and time.monotonic() >= wall_clock_deadline:
-                        raise TimeoutError("wall-clock budget exceeded before Gemini request")
-                    gen_config = self._build_generation_config(
-                        model_name=model,
-                        system_instruction=system_instruction,
-                        response_schema=response_schema,
-                        thinking_level=thinking_level,
-                        extra_config={"max_output_tokens": max_output_tokens},
-                    )
-                    logger.info("LLMClient: calling %s (attempt %d)", model, attempt + 1)
-                    resp = self._client.models.generate_content(
-                        model=model,
-                        contents=current_prompt,
-                        config=gen_config,
-                    )
-                    return resp, model
+        # Wrap each string as its own Content so multimodal embedding models
+        # (gemini-embedding-2*) embed each item independently rather than
+        # merging consecutive strings into a single embedding.
+        embed_contents = [
+            types.Content(parts=[types.Part.from_text(text=text if text else " ")])
+            for text in contents
+        ]
 
-                except Exception as exc:
-                    last_err = exc
-                    err_class, retry_delay = _classify_error(exc)
-                    logger.warning("LLMClient: %s on model %s attempt %d: %s", err_class, model, attempt + 1, exc)
+        def _call(model: str, _retry_context: str) -> Any:
+            res = self._client.models.embed_content(
+                model=model,
+                contents=embed_contents,
+            )
+            embeddings = getattr(res, "embeddings", None) if res is not None else None
+            if not embeddings or len(embeddings) != len(contents):
+                got = len(embeddings) if embeddings else 0
+                raise ValueError(
+                    f"Incomplete embedding response from {model}: expected {len(contents)}, got {got}"
+                )
+            return res
 
-                    if err_class == EC_CONFIG:
-                        config_failed_models.append(model)
-                        # CONFIG errors are deterministic; fail fast, don't retry this or other models
-                        # UNLESS it could be model-specific (thinking not supported etc.) - break inner loop
-                        break  # try next model in case it's model-specific config
-
-                    elif err_class == EC_QUOTA:
-                        # Determine cooldown duration
-                        if retry_delay is not None and retry_delay <= 12:
-                            # Per-minute quota, wait once then retry
-                            if attempt == 0:
-                                logger.info("LLMClient: quota retry delay %ds on %s", retry_delay, model)
-                                time.sleep(retry_delay + 1)
-                                continue  # retry this model
-                        # Put on cooldown and move to next model
-                        cooldown_dur = self._long_cooldown_s if (retry_delay is None or retry_delay > 60) else self._short_cooldown_s
-                        self._set_cooldown(model, cooldown_dur, str(exc))
-                        break  # next model
-
-                    elif err_class in (EC_TRANSIENT, EC_UNKNOWN):
-                        # A request timeout has already consumed the provider
-                        # request budget. Retrying the same model delays the
-                        # configured fallback chain, so advance immediately.
-                        is_timeout = (
-                            isinstance(exc, TimeoutError)
-                            or "timeout" in str(exc).lower()
-                            or "timed out" in str(exc).lower()
-                        )
-                        if is_timeout:
-                            next_model = available[available.index(model) + 1] if model != available[-1] else None
-                            logger.info(
-                                "LLMClient: timeout on %s; falling back to %s",
-                                model,
-                                next_model or "no remaining model",
-                            )
-                            break
-                        if attempt == 0:
-                            sleep_t = (2 ** attempt) + random.uniform(0, 1)
-                            logger.info("LLMClient: transient retry in %.1fs on %s", sleep_t, model)
-                            time.sleep(sleep_t)
-                            continue  # retry same model
-                        break  # next model after 2 attempts
-
-                    elif err_class == EC_CONTENT:
-                        if attempt == 0:
-                            # retry once with error context
-                            retry_prompt_suffix = f"Previous attempt failed with: {str(exc)[:200]}"
-                            current_prompt = prompt + f"\n\n[Retry context: {retry_prompt_suffix}]"
-                            continue
-                        break  # content errors don't benefit from more retries
-
-        # If all failures were CONFIG type (same on every model), fail fast with single message
-        if last_err and config_failed_models and len(config_failed_models) >= len(available):
-            raise RuntimeError(f"llm_config_error: {last_err}")
-
-        # All models exhausted
-        available_after = [m for m in models if not self._is_on_cooldown(m)]
-        if not available_after:
-            raise RuntimeError(f"llm_quota_exhausted: all models on cooldown after failures")
-
-        raise RuntimeError(f"llm_unavailable: all models failed. Last error: {last_err}")
+        return self._execute_with_fallback(
+            models=models,
+            call_fn=_call,
+            operation="embed",
+            wall_clock_deadline=wall_clock_deadline,
+            allow_content_retry=False,
+        )
 
     def assert_no_tools_in_analyzer_call(self) -> None:
         """Assert that no tools are passed to Agent 3. Called in tests."""

@@ -28,13 +28,18 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
 
+import os
+import numpy as np
+
 from backend.config import (
+    EMBEDDING_MODELS,
     MAX_CANDIDATES,
     MAX_RSS_ITEMS_PER_QUERY,
     RSS_REQUEST_TIMEOUT,
     SOURCE_TIERS,
     logger,
 )
+from backend.llm_client import LLMClient
 from backend.utils.progress import ProgressCallback, report
 
 try:
@@ -46,19 +51,6 @@ try:
     import googlenewsdecoder
 except ImportError:  # pragma: no cover
     googlenewsdecoder = None
-
-import os
-import numpy as np
-
-try:
-    from fastembed import TextEmbedding
-except ImportError:  # pragma: no cover
-    TextEmbedding = None
-
-try:
-    from google import genai
-except ImportError:  # pragma: no cover
-    genai = None
 
 from bs4 import BeautifulSoup
 
@@ -92,6 +84,17 @@ def _is_safe_url(url: str) -> bool:
 
 class NewsScraperAgent:
     """Retrieve, rank, and pool Google News RSS candidates without judging claims."""
+
+    def __init__(self, llm_client: Optional[LLMClient] = None):
+        self._llm_client = llm_client
+
+    def _get_llm_client(self) -> Optional[LLMClient]:
+        if self._llm_client is None and os.getenv("GEMINI_API_KEY"):
+            try:
+                self._llm_client = LLMClient()
+            except Exception as exc:
+                logger.warning("Failed to initialize LLMClient for embeddings: %s", exc)
+        return self._llm_client
 
     def _normalise_domain(self, value: str) -> str:
         domain = urllib.parse.urlparse(value if "://" in value else f"https://{value}").netloc.lower()
@@ -213,76 +216,53 @@ class NewsScraperAgent:
         covered = sum(1 for group in must_have_terms if self._matches_group(text, group))
         return covered / len(must_have_terms)
 
-    _local_embedder = None
-
-    @classmethod
-    def _get_local_embedder(cls):
-        if cls._local_embedder is None and TextEmbedding is not None:
-            try:
-                cls._local_embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
-            except Exception as exc:
-                logger.debug("Local fastembed model init failed: %s", exc)
-        return cls._local_embedder
-
-    def _compute_semantic_similarities(self, claim_text: str, candidate_texts: List[str]) -> List[float]:
-        """Compute dense neural embedding similarities (FastEmbed ONNX locally -> Gemini API -> TF-IDF)."""
+    def _compute_semantic_similarities(
+        self,
+        claim_text: str,
+        candidate_texts: List[str],
+        llm_client: Optional[LLMClient] = None,
+        wall_clock_deadline: Optional[float] = None,
+    ) -> List[float]:
+        """Compute dense neural embedding similarities via Gemini Embedding API fallback chain (with TF-IDF emergency fallback)."""
         if not candidate_texts:
             return []
         if not claim_text.strip():
             return [0.5] * len(candidate_texts)
 
-        # 1. Primary: Fast, local ONNX dense embedding (19ms, ~100MB RAM, zero API calls, ideal for Render)
-        embedder = self._get_local_embedder()
-        if embedder is not None:
+        # 1. Primary: API-based dense neural embedding with model fallback chain
+        client = llm_client or self._get_llm_client()
+        if client is not None and EMBEDDING_MODELS:
             try:
-                all_texts = [claim_text[:1000]] + [t[:1000] for t in candidate_texts]
-                embeddings = list(embedder.embed(all_texts))
-                claim_vec = embeddings[0]
-                claim_norm = float(np.linalg.norm(claim_vec))
-                sims = []
-                for doc_vec in embeddings[1:]:
-                    doc_norm = float(np.linalg.norm(doc_vec))
-                    if claim_norm > 0 and doc_norm > 0:
-                        cos_sim = float(np.dot(claim_vec, doc_vec) / (claim_norm * doc_norm))
-                        sims.append(round(max(0.0, min(1.0, cos_sim)), 4))
-                    else:
-                        sims.append(0.5)
-                if len(sims) == len(candidate_texts):
-                    return sims
-            except Exception as exc:
-                logger.debug("FastEmbed local inference error: %s; trying Gemini cloud embedding", exc)
-
-        # 2. Secondary: Cloud dense neural embedding (gemini-embedding-001)
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai is not None and api_key:
-            try:
-                client = genai.Client(api_key=api_key)
                 all_sims: List[float] = []
                 chunk_size = 50
                 for i in range(0, len(candidate_texts), chunk_size):
                     chunk = candidate_texts[i:i + chunk_size]
-                    batch_contents = [claim_text[:1000]] + [t[:1000] for t in chunk]
-                    res = client.models.embed_content(
-                        model="gemini-embedding-001",
+                    batch_contents = [claim_text[:1000]] + [(t.strip() or " ")[:1000] for t in chunk]
+                    res, model_used = client.embed(
+                        models=EMBEDDING_MODELS,
                         contents=batch_contents,
+                        wall_clock_deadline=wall_clock_deadline,
                     )
-                    if res and res.embeddings and len(res.embeddings) == len(batch_contents):
-                        vecs = [np.array(e.values) for e in res.embeddings]
-                        claim_vec = vecs[0]
-                        claim_norm = float(np.linalg.norm(claim_vec))
-                        for doc_vec in vecs[1:]:
-                            doc_norm = float(np.linalg.norm(doc_vec))
-                            if claim_norm > 0 and doc_norm > 0:
-                                cos_sim = float(np.dot(claim_vec, doc_vec) / (claim_norm * doc_norm))
-                                all_sims.append(round(max(0.0, min(1.0, cos_sim)), 4))
-                            else:
-                                all_sims.append(0.5)
+                    vecs = [np.array(e.values) for e in res.embeddings]
+                    claim_vec = vecs[0]
+                    claim_norm = float(np.linalg.norm(claim_vec))
+                    for doc_vec in vecs[1:]:
+                        doc_norm = float(np.linalg.norm(doc_vec))
+                        if claim_norm > 0 and doc_norm > 0:
+                            cos_sim = float(np.dot(claim_vec, doc_vec) / (claim_norm * doc_norm))
+                            all_sims.append(round(max(0.0, min(1.0, cos_sim)), 4))
+                        else:
+                            all_sims.append(0.5)
+                    logger.info(
+                        "Semantic similarities computed using %s (%d candidates)",
+                        model_used, len(chunk),
+                    )
                 if len(all_sims) == len(candidate_texts):
                     return all_sims
             except Exception as exc:
-                logger.debug("Gemini dense embedding error: %s; falling back to TF-IDF semantic", exc)
+                logger.warning("Gemini embedding fallback chain failed: %s; falling back to TF-IDF semantic", exc)
 
-        # 3. Tertiary: Robust TF-IDF n-gram cosine fallback (local, instant, zero external API)
+        # 2. Emergency fallback: TF-IDF n-gram cosine similarity (used only if API key missing or all embedding models fail)
         try:
             from sklearn.feature_extraction.text import TfidfVectorizer
             from sklearn.metrics.pairwise import cosine_similarity
@@ -658,6 +638,8 @@ class NewsScraperAgent:
         planned_queries: List[Dict[str, Any]],
         claim_analysis: Optional[Dict[str, Any]] = None,
         on_progress: Optional[ProgressCallback] = None,
+        llm_client: Optional[LLMClient] = None,
+        wall_clock_deadline: Optional[float] = None,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         claim_analysis = claim_analysis or {}
         report(on_progress, "web_scraping", f"Agent 2 (News Scraper): Running {len(planned_queries)} date-windowed searches...")
@@ -755,7 +737,12 @@ class NewsScraperAgent:
         candidate_items = list(candidates.values())
         if candidate_items and normalized_claim:
             candidate_texts = [f"{c.get('title', '')} {c.get('excerpt', '')}" for c in candidate_items]
-            semantic_sims = self._compute_semantic_similarities(normalized_claim, candidate_texts)
+            semantic_sims = self._compute_semantic_similarities(
+                normalized_claim,
+                candidate_texts,
+                llm_client=llm_client,
+                wall_clock_deadline=wall_clock_deadline,
+            )
             for c, sim in zip(candidate_items, semantic_sims):
                 c["semantic_score"] = sim
                 c["score"] = self._rank_candidate(c, claim_analysis, semantic_score=sim)

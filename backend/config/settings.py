@@ -88,6 +88,18 @@ ANALYZER_MODELS: list[str] = [
     if m.strip()
 ]
 
+# Embedding models in priority order (API-based dense embeddings with fallbacks)
+DEFAULT_EMBEDDING_MODELS = (
+    "gemini-embedding-001,"
+    "gemini-embedding-2,"
+    "gemini-embedding-2-preview"
+)
+EMBEDDING_MODELS: list[str] = [
+    m.strip()
+    for m in os.getenv("GEMINI_EMBEDDING_MODELS", DEFAULT_EMBEDDING_MODELS).split(",")
+    if m.strip()
+]
+
 # Legacy single-model env vars (for backwards compatibility)
 PLANNER_MODEL = PLANNER_MODELS[0] if PLANNER_MODELS else "gemini-2.5-flash"
 ANALYZER_MODEL = ANALYZER_MODELS[0] if ANALYZER_MODELS else "gemini-2.5-flash"

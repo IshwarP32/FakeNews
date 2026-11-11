@@ -117,6 +117,8 @@ class GeminiVerifier:
             queries,
             claim_analysis=claim_analysis,
             on_progress=on_progress,
+            llm_client=self.llm_client,
+            wall_clock_deadline=wall_clock_deadline,
         )
         trace["scraper_log"] = {"query_count": len(queries), "articles_found": len(articles)}
 
