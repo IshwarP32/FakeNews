@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 from backend.config import logger
@@ -122,7 +123,13 @@ class EvidenceAnalyzerAgent:
                 limitations="The evidence analysis response was empty or invalid; no unvalidated claims were returned.",
             ).model_dump()
 
-    def validate_grounding(self, result: Dict[str, Any], articles: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def validate_grounding(
+        self,
+        result: Dict[str, Any],
+        articles: List[Dict[str, Any]],
+        claim_analysis: Optional[Dict[str, Any]] = None,
+        today_str: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Validate article IDs and verbatim quotes before the result reaches the API.
         
         Phase 6 checks:
@@ -130,7 +137,8 @@ class EvidenceAnalyzerAgent:
         2. Quote validation: evidence_quote must be verbatim substring
         3. Grounding check: years/numbers in summary must appear in cited articles
         4. Verdict consistency: True requires all propositions supported by direct evidence
-        5. Confidence capping based on code-side rubric
+        5. Temporal staleness guard for undated claims
+        6. Confidence capping based on code-side rubric
         """
         articles_by_id = {str(article.get("id")): article for article in articles}
         warnings: List[str] = []
@@ -299,7 +307,70 @@ class EvidenceAnalyzerAgent:
             warnings.append("Verdict downgraded: no direct evidence IDs")
 
         # -----------------------------------------------------------------------
-        # 6. Confidence capping
+        # 6. Temporal staleness guard for undated claims
+        # -----------------------------------------------------------------------
+        time_ref = (claim_analysis or {}).get("time_reference", "")
+        temporal = result.get("temporal_analysis", {}) or {}
+        current_verdict = result.get("verdict", "Unverified")
+
+        if (
+            time_ref in ("implicit_news_like", "relative_current")
+            and current_verdict in ("True", "Partially True")
+            and today_str
+            and valid_direct_ids
+        ):
+            try:
+                today_date = datetime.strptime(today_str, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                today_date = date.today()
+
+            staleness_threshold = today_date.replace(year=today_date.year - 1)
+
+            newest_evidence_date: Optional[date] = None
+            for aid in valid_direct_ids:
+                art = articles_by_id.get(aid, {})
+                pub = art.get("pub_date", "")
+                if not pub:
+                    continue
+                try:
+                    parsed = datetime.fromisoformat(str(pub).replace("Z", "+00:00")).date()
+                    if newest_evidence_date is None or parsed > newest_evidence_date:
+                        newest_evidence_date = parsed
+                except (ValueError, TypeError):
+                    continue
+
+            if newest_evidence_date is not None and newest_evidence_date < staleness_threshold:
+                old_verdict = current_verdict
+                result["verdict"] = "Misleading"
+                result["confidence"] = "Medium" if result.get("confidence") == "High" else "Low"
+                result["flags"] = sorted(set(result.get("flags", [])) | {"recycled_news", "stale_evidence"})
+                age_years = (today_date - newest_evidence_date).days // 365
+                result["limitations"] = (
+                    f"All direct evidence is from ~{age_years} year(s) ago "
+                    f"(newest: {newest_evidence_date.isoformat()}). "
+                    f"The claim has no date, implying it is current, but no recent evidence confirms it. "
+                    f"Verdict downgraded from {old_verdict} to Misleading (recycled/outdated news)."
+                )
+                warnings.append(
+                    f"Temporal staleness guard: all direct evidence >{age_years}yr old "
+                    f"(newest {newest_evidence_date}) for {time_ref} claim → {old_verdict}→Misleading"
+                )
+
+        # Also check recycled_news_suspected from Agent 3's temporal_analysis
+        if (
+            temporal.get("recycled_news_suspected")
+            and result.get("verdict") in ("True", "Partially True")
+            and time_ref in ("implicit_news_like", "relative_current")
+        ):
+            old_verdict = result["verdict"]
+            result["verdict"] = "Misleading"
+            result["flags"] = sorted(set(result.get("flags", [])) | {"recycled_news"})
+            warnings.append(
+                f"Temporal staleness guard (AI-flagged): recycled_news_suspected=True → {old_verdict}→Misleading"
+            )
+
+        # -----------------------------------------------------------------------
+        # 7. Confidence capping
         # -----------------------------------------------------------------------
         confidence = result.get("confidence", "Low")
         confidence = self._cap_confidence(confidence, result, articles_by_id, valid_direct_ids)

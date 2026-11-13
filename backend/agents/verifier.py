@@ -204,7 +204,7 @@ class GeminiVerifier:
                 return self._error_result("llm_unavailable", f"Evidence analysis failed: {err_msg[:200]}", failed_agent="Agent 3 (Evidence Analyzer)")
 
         # Validate and ground the result
-        result = self.analyzer.validate_grounding(result, articles)
+        result = self.analyzer.validate_grounding(result, articles, claim_analysis=claim_analysis, today_str=today_str)
 
         # -----------------------------------------------------------------
         # Build response

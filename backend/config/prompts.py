@@ -24,8 +24,8 @@ STEP 1 - ANALYZE
 - time_reference:
   explicit_date = the claim names a date/month/year/period.
   relative_current = today, now, currently, this year, just, breaking, latest, recently.
-  implicit_news_like = undated, about something that recurs or changes (a win, result, appointment, arrest, ruling, statement, death, launch, price, record). These often circulate as recycled news.
-  timeless_historical = undated, about a one-off past event or settled fact.
+  implicit_news_like = undated, about something that could be current news: a policy action, government announcement, ban, demonetisation, arrest, appointment, ruling, launch, death, price change, result, win, record, or any event a reader would assume is happening NOW if no date is given. Use this even if the event was one-off historically, because an undated claim implies recency. These often circulate as recycled old news.
+  timeless_historical = undated, about a permanent geographical, scientific or constitutional fact ("Mount Everest is the tallest mountain", "India has 28 states"). NOT for policy actions, government decisions, elections, or any event that a news reader would assume is recent.
 - event_recurrence: one_off | recurring | ongoing_state | unknown.
 - estimated_event_period: basis stated_in_claim if the claim gives it; model_guess ONLY if you are fairly sure from background knowledge (it only widens searches and never decides anything); otherwise unknown with start_year=0 end_year=0.
 - primary_reading: for recurring/ongoing/implicit_news_like claims, the LATEST edition or current state as of TODAY (anything else goes to alternate_readings). For explicit_date and timeless_historical claims, the stated or original event.
@@ -67,11 +67,12 @@ FOLLOW THE JSON FIELD ORDER: article_assessments first, then propositions, tempo
 
 2. TIME LOGIC (use claim_analysis.time_reference; correct it only if obviously wrong)
 - explicit_date: judge against that period. Accept reporting from that period however old it is.
-- timeless_historical: judge against what happened then. Old authoritative reporting is fine; age is not staleness.
+- timeless_historical: judge against what happened then. Old authoritative reporting is fine; age is not staleness. Use only for permanent, settled facts (geography, science, constitutional structure), NOT for government policy actions or events.
 - relative_current: only current-period evidence can support it. Older evidence of a real but old event -> Misleading (recycled); otherwise Unverified.
 - implicit_news_like / recurring / ongoing_state, undated: the primary reading is the LATEST edition or current state as of TODAY.
   * Direct evidence for the latest edition -> judge on it.
-  * Direct evidence only for earlier editions -> the primary reading has no evidence: Unverified, or Misleading if the claim carries recency cues (breaking, today, just, now, this year). List earlier occurrences in historical_context. Do NOT answer True because it was once true.
+  * Direct evidence only for earlier editions or years-old events -> the primary reading has no evidence: verdict = Misleading if the event once happened (recycled/outdated news), Unverified if uncertain. List earlier occurrences in historical_context. Do NOT answer True because it was once true.
+  * CRITICAL: if all retrieved articles are from a significantly earlier period (e.g. years ago) and no current articles confirm the claim is happening NOW, the claim is recycled old news. Verdict MUST be Misleading, not True, even if the original event really happened. An undated claim like "X to be demonetised" or "Y arrested" implies it is happening now; old evidence proving it happened years ago makes the claim misleading, not true.
   * Latest edition contradicts the claim but an earlier edition supports it -> Misleading.
 - Staleness applies only to a current-time assertion, never to explicit-date or historical claims.
 
